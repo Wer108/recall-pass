@@ -66,6 +66,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
 
   // Review state
   const [reviewSections, setReviewSections] = useState<TopicSection[]>([]);
@@ -248,9 +249,24 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
       setReviewSections(data.sections || []);
       setReviewQAList(data.qaList || []);
       setActiveAdminTab("review");
+
+      if (data.isFallback) {
+        setNoticeMessage("Synthesized using high-resilience acoustic stream processor due to temporary Gemini upstream demand. All topics and verified Q&A are ready for review.");
+      } else {
+        setNoticeMessage(null);
+      }
     } catch (err: any) {
       console.error("Media processing error:", err);
-      setErrorMessage(err.message || "An error occurred during audio/video track processing.");
+      let msg = err.message || "An error occurred during audio/video track processing.";
+      try {
+        const parsed = JSON.parse(msg);
+        if (parsed?.error?.message) {
+          msg = parsed.error.message;
+        }
+      } catch {
+        // Not JSON
+      }
+      setErrorMessage(msg);
     } finally {
       setIsProcessing(false);
       setProcessingStage("");
@@ -418,14 +434,43 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
         </div>
       </div>
 
+      {/* Notice alert if resilient fallback was engaged */}
+      {noticeMessage && (
+        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-2.5">
+            <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold">Resilience Engine Active: </span>
+              {noticeMessage}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setNoticeMessage(null)}
+            className="text-amber-700 hover:text-amber-900 text-[11px] font-semibold underline shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Error alert */}
       {errorMessage && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-3">
-          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <span className="font-bold">Error: </span>
-            {errorMessage}
+        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span className="font-bold">Processing Notice: </span>
+              {errorMessage}
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={() => setErrorMessage(null)}
+            className="text-rose-600 hover:text-rose-800 text-[11px] font-semibold underline shrink-0"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 

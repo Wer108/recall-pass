@@ -1,0 +1,137 @@
+[
+  {
+    "id": "session-1789317723983",
+    "accessCode": "RP-DLVV89",
+    "title": "Microservices Reliability Masterclass",
+    "speaker": "Dr. Aris Thorne",
+    "createdAt": "2026-09-13T16:42:03.983Z",
+    "expiresAt": "2026-11-12T16:42:03.983Z",
+    "mediaType": "audio",
+    "trackName": "dr_thorne_masterclass.mp3",
+    "trackDuration": "45:00",
+    "wordCount": 800,
+    "rawTranscriptSnippet": "AUDIO track: dr_thorne_masterclass.mp3 (45:00)",
+    "published": true,
+    "sections": [
+      {
+        "id": "sec-test-1",
+        "title": "Network Latency Realities",
+        "bullets": [
+          "The network is inherently unreliable.",
+          "Thread pools deplete under sync calls."
+        ]
+      }
+    ],
+    "qaList": [
+      {
+        "id": "qa-test-1",
+        "question": "How do we avoid cascading latency?",
+        "answer": "Implement circuit breakers with strict timeouts.",
+        "askerContext": "Audience Member"
+      }
+    ]
+  },
+  {
+    "id": "session-cloudscale-2026",
+    "accessCode": "RP-CLOUD1",
+    "title": "Designing Resilient Distributed Systems Under High Concurrency",
+    "speaker": "Dr. Aris Thorne (Principal Systems Architect)",
+    "eventContext": "CloudScale Global Summit 2026",
+    "createdAt": "2026-09-13T13:39:04.514Z",
+    "expiresAt": "2026-11-12T16:41:52.229Z",
+    "wordCount": 840,
+    "rawTranscriptSnippet": "Keynote on resilient distributed architectures, circuit breakers, idempotency, and chaos engineering.",
+    "published": true,
+    "sections": [
+      {
+        "id": "sec-1",
+        "title": "Introduction & Distributed Realities",
+        "bullets": [
+          "Modern microservices face everyday operational conditions of partial failure and network latency.",
+          "L. Peter Deutsch's fallacies reminder: the network is neither reliable nor infinite in bandwidth.",
+          "Unconstrained synchronous chain calls accounted for over 64% of high-severity financial cloud outages.",
+          "Thread pool exhaustion rapidly cascades backwards from downstream dependency hiccups."
+        ]
+      },
+      {
+        "id": "sec-2",
+        "title": "Circuit Breakers & Bulkhead Isolation",
+        "bullets": [
+          "Circuit breakers monitor outbound calls over sliding windows and trip fast when errors exceed 15%.",
+          "Failing fast prevents thread pool deadlock and immediately serves degraded fallbacks or cached state.",
+          "Bulkheading strictly isolates resource pools so non-critical features cannot starve transactional cores.",
+          "Separate dedicated worker pools for payment authorization versus recommendation queries."
+        ]
+      },
+      {
+        "id": "sec-3",
+        "title": "Strict Idempotency & Event Sourcing",
+        "bullets": [
+          "Every mutating request must include a client-generated UUID idempotency key.",
+          "Atomic time-to-live caching on keys prevents duplicate billing and inventory double-booking during retries.",
+          "Event sourcing models domain state as an immutable append-only ledger rather than static row snapshots.",
+          "Enables deterministic state replay during bug remediation and rigorous mathematical auditability."
+        ]
+      },
+      {
+        "id": "sec-4",
+        "title": "Observability & Proactive Chaos Engineering",
+        "bullets": [
+          "Move beyond basic CPU/memory tracking to p99 journey latency and error budget burn rates.",
+          "Resilience must be intentionally proven by breaking systems in staging and production.",
+          "Regularly inject synthetic 500ms network jitter and kill container pods during peak load drills."
+        ]
+      }
+    ],
+    "qaList": [
+      {
+        "id": "qa-1",
+        "question": "How do you handle circuit breakers in high-stakes domains (like live trading) where stale cached data is worse than an error?",
+        "answer": "In strict transactional paths, do not return stale fallback data. Return an explicit, structured business rejection error (e.g. 'MARKET_DATA_TRANSIENT_UNAVAILABLE') so trading algorithms never execute blindly.",
+        "askerContext": "Marcus (Audience)"
+      },
+      {
+        "id": "qa-2",
+        "question": "Where do you recommend storing idempotency tokens in high-throughput systems without creating a bottleneck?",
+        "answer": "Use a multi-zone distributed in-memory key-value cluster (like Redis Cluster) with atomic SETNX and a strict 24-hour expiration window. This keeps memory bounded and latency sub-millisecond.",
+        "askerContext": "Sarah (Audience)"
+      },
+      {
+        "id": "qa-3",
+        "question": "What is the most effective first step for a legacy team with high resistance to chaos engineering?",
+        "answer": "Start in CI or staging with proxy blackhole tests against external vendors (e.g., adding 3-second latency to a payment API) to show actual uncaught failure modes safely before touching production.",
+        "askerContext": "David (Audience)"
+      }
+    ]
+  },
+  {
+    "id": "session-expired-demo",
+    "accessCode": "RP-EXPIRE",
+    "title": "Advanced Cognitive Architecture & Long-Term Memory Retrieval",
+    "speaker": "Prof. Elena Rostova",
+    "eventContext": "Pedagogy Summit 2026",
+    "createdAt": "2026-08-14T13:39:04.514Z",
+    "expiresAt": "2026-11-12T16:41:48.595Z",
+    "wordCount": 620,
+    "rawTranscriptSnippet": "Workshop on the testing effect, spaced retrieval practice, and desirable difficulties.",
+    "published": true,
+    "sections": [
+      {
+        "id": "sec-e1",
+        "title": "The Fluency Illusion",
+        "bullets": [
+          "Rereading and highlighting create familiarity mistaken for deep comprehension.",
+          "True learning requires effortful neural retrieval practice."
+        ]
+      }
+    ],
+    "qaList": [
+      {
+        "id": "qa-e1",
+        "question": "How should students deal with emotional frustration during failed retrieval attempts?",
+        "answer": "Reframe errors as the neuroplasticity window: prediction errors maximize dopamine-mediated consolidation upon seeing the correction.",
+        "askerContext": "Student (Audience)"
+      }
+    ]
+  }
+]

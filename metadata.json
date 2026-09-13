@@ -1,0 +1,7 @@
+{
+  "name": "RecallPass",
+  "description": "Smart-education note recall tool for live learning sessions with video and audio track ingestion, topic-segmented notes, verified audience Q&A extraction, and time-expiring attendee access codes.",
+  "requestFramePermissions": ["microphone", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

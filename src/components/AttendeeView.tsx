@@ -18,6 +18,7 @@ import { SessionData } from "../types";
 import { NotesSection } from "./NotesSection";
 import { QASection } from "./QASection";
 import { PremiumExpiredCard } from "./PremiumExpiredCard";
+import { sessionStore } from "../services/sessionStore";
 
 interface AttendeeViewProps {
   initialCode?: string;
@@ -47,13 +48,7 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
     setError(null);
 
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(cleanCode)}`);
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Could not locate session with this code.");
-      }
-
+      const data = await sessionStore.getSessionByCode(cleanCode);
       setSession(data);
       setInputCode(cleanCode);
 

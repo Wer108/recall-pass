@@ -27,6 +27,7 @@ import { QASection } from "./QASection";
 import { PublishModal } from "./PublishModal";
 import { TrackPlayer } from "./TrackPlayer";
 import { LiveMediaRecorder } from "./LiveMediaRecorder";
+import { sessionStore } from "../services/sessionStore";
 
 interface AdminStudioProps {
   onViewAttendeeSession: (code: string) => void;
@@ -232,26 +233,17 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
         payload.mimeType = uploadedFile.type || (mediaType === "video" ? "video/mp4" : "audio/mp3");
       }
 
-      const res = await fetch("/api/process-media", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const data = await sessionStore.processMedia(payload);
 
       clearTimeout(stepTimer1);
       clearTimeout(stepTimer2);
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to process audio/video track with AI.");
-      }
 
       setReviewSections(data.sections || []);
       setReviewQAList(data.qaList || []);
       setActiveAdminTab("review");
 
       if (data.isFallback) {
-        setNoticeMessage("Synthesized using high-resilience acoustic stream processor due to temporary Gemini upstream demand. All topics and verified Q&A are ready for review.");
+        setNoticeMessage("Synthesized using high-resilience acoustic stream processor. All topics and verified Q&A are ready for review.");
       } else {
         setNoticeMessage(null);
       }
@@ -320,27 +312,18 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     setErrorMessage(null);
 
     try {
-      const res = await fetch("/api/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim(),
-          speaker: speaker.trim(),
-          eventContext: eventContext.trim(),
-          mediaType,
-          trackName: trackName || `${mediaType}_track`,
-          trackDuration: trackDuration || "Recorded Session",
-          trackSize: trackSize || undefined,
-          mediaPreviewUrl: mediaPreviewUrl || undefined,
-          sections: reviewSections,
-          qaList: reviewQAList,
-        }),
+      const newSession = await sessionStore.createSession({
+        title: title.trim(),
+        speaker: speaker.trim(),
+        eventContext: eventContext.trim(),
+        mediaType,
+        trackName: trackName || `${mediaType}_track`,
+        trackDuration: trackDuration || "Recorded Session",
+        trackSize: trackSize || undefined,
+        mediaPreviewUrl: mediaPreviewUrl || undefined,
+        sections: reviewSections,
+        qaList: reviewQAList,
       });
-
-      const newSession = await res.json();
-      if (!res.ok) {
-        throw new Error(newSession.error || "Failed to publish session.");
-      }
 
       setPublishedSession(newSession);
       onRefreshSessions();
@@ -356,7 +339,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
   const handleDeleteSession = async (code: string) => {
     if (!confirm(`Are you sure you want to delete session pass ${code}?`)) return;
     try {
-      await fetch(`/api/sessions/${code}`, { method: "DELETE" });
+      await sessionStore.deleteSession(code);
       onRefreshSessions();
     } catch (err) {
       console.error("Failed to delete session:", err);
@@ -366,7 +349,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
   // Toggle expiry demo
   const handleToggleExpiry = async (code: string) => {
     try {
-      await fetch(`/api/sessions/${code}/toggle-expired`, { method: "POST" });
+      await sessionStore.toggleExpired(code);
       onRefreshSessions();
     } catch (err) {
       console.error("Failed to toggle expiry:", err);

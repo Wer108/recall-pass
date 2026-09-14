@@ -4,6 +4,7 @@ import { AttendeeView } from "./components/AttendeeView";
 import { AdminStudio } from "./components/AdminStudio";
 import { SessionData } from "./types";
 import { BookOpen, Sparkles, Shield, Clock } from "lucide-react";
+import { sessionStore } from "./services/sessionStore";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<"attendee" | "admin">("attendee");
@@ -13,11 +14,8 @@ export default function App() {
   // Fetch all sessions for Admin view and demo counter
   const fetchSessions = async () => {
     try {
-      const res = await fetch("/api/sessions");
-      if (res.ok) {
-        const data = await res.json();
-        setSessions(data);
-      }
+      const data = await sessionStore.getSessions();
+      setSessions(data);
     } catch (err) {
       console.error("Failed to load sessions:", err);
     }

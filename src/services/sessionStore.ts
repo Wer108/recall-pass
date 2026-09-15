@@ -1,7 +1,33 @@
-import { SessionData, TopicSection, QAPair } from "../types";
+import { SessionData, TopicSection, QAPair, AdminAuthSession, EventTrainingProfile } from "../types";
 import { SAMPLE_MEDIA_TRACKS } from "../data/sampleMediaTracks";
 
 const STORAGE_KEY = "recallpass_sessions_v1";
+const ADMIN_SESSION_KEY = "recallpass_admin_session_v1";
+const ADMIN_CREDENTIALS_KEY = "recallpass_admin_cred_v1";
+
+interface LocalAdminCreds {
+  loginId: string;
+  password: string;
+}
+
+function getLocalAdminCreds(): LocalAdminCreds | null {
+  try {
+    const raw = localStorage.getItem(ADMIN_CREDENTIALS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.loginId && parsed.password) {
+        return parsed;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function saveLocalAdminCreds(creds: LocalAdminCreds) {
+  try {
+    localStorage.setItem(ADMIN_CREDENTIALS_KEY, JSON.stringify(creds));
+  } catch {}
+}
 
 export function getDefaultSessions(): SessionData[] {
   const now = new Date();
@@ -242,6 +268,8 @@ export const sessionStore = {
     trackDuration?: string;
     trackSize?: string;
     mediaPreviewUrl?: string;
+    mediaUrl?: string;
+    isLiveEventSession?: boolean;
     sections: TopicSection[];
     qaList: QAPair[];
   }): Promise<SessionData> {
@@ -280,7 +308,9 @@ export const sessionStore = {
       trackName: payload.trackName,
       trackDuration: payload.trackDuration,
       trackSize: payload.trackSize,
-      mediaPreviewUrl: payload.mediaPreviewUrl,
+      mediaPreviewUrl: payload.mediaPreviewUrl || payload.mediaUrl,
+      mediaUrl: payload.mediaUrl || payload.mediaPreviewUrl,
+      isLiveEventSession: payload.isLiveEventSession,
       createdAt: now.toISOString(),
       expiresAt,
       wordCount: payload.sections.reduce(
@@ -424,6 +454,257 @@ export const sessionStore = {
         trackDuration: payload.trackDuration || "Recorded Session",
       },
     };
+  },
+
+  // Get active admin auth session
+  getAdminSession(): AdminAuthSession | null {
+    try {
+      const sess = sessionStorage.getItem(ADMIN_SESSION_KEY) || localStorage.getItem(ADMIN_SESSION_KEY);
+      if (!sess) return null;
+      const parsed = JSON.parse(sess);
+      if (parsed && parsed.role === "admin" && parsed.adminId) {
+        return parsed as AdminAuthSession;
+      }
+    } catch {}
+    return null;
+  },
+
+  // Check if admin is configured
+  async getAdminStatus(): Promise<{ isConfigured: boolean; loginId: string | null }> {
+    try {
+      const res = await fetch("/api/admin/status");
+      if (res.ok) {
+        const data = await tryParseJson(res);
+        return {
+          isConfigured: Boolean(data.isConfigured),
+          loginId: data.loginId || null,
+        };
+      }
+    } catch {}
+    const local = getLocalAdminCreds();
+    return {
+      isConfigured: Boolean(local && local.loginId && local.password),
+      loginId: local?.loginId || null,
+    };
+  },
+
+  // Setup initial admin credentials (no default credentials)
+  async setupAdmin(loginId: string, password: string): Promise<AdminAuthSession> {
+    const cleanId = loginId.trim();
+    const cleanPw = password.trim();
+
+    if (!cleanId || cleanId.length < 3) {
+      throw new Error("Admin Login ID must be at least 3 characters long.");
+    }
+    if (!cleanPw || cleanPw.length < 6) {
+      throw new Error("Admin Password must be at least 6 characters long.");
+    }
+
+    try {
+      const res = await fetch("/api/admin/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loginId: cleanId, password: cleanPw }),
+      });
+
+      if (res.ok) {
+        const data = await tryParseJson(res);
+        saveLocalAdminCreds({ loginId: cleanId, password: cleanPw });
+        const session: AdminAuthSession = {
+          adminId: data.adminId || cleanId,
+          token: data.token,
+          loginTime: data.loginTime || new Date().toISOString(),
+          role: "admin",
+        };
+        try {
+          sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+          localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+        } catch {}
+        return session;
+      } else {
+        const err = await tryParseJson(res);
+        throw new Error(err.error || "Failed to set up admin account.");
+      }
+    } catch (err: any) {
+      if (err.message && !err.message.includes("fetch") && !err.message.includes("network") && !err.message.includes("Failed to fetch")) {
+        throw err;
+      }
+      // Local fallback setup
+      saveLocalAdminCreds({ loginId: cleanId, password: cleanPw });
+      const session: AdminAuthSession = {
+        adminId: cleanId,
+        token: `rp_local_${Date.now()}`,
+        loginTime: new Date().toISOString(),
+        role: "admin",
+      };
+      try {
+        sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+        localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+      } catch {}
+      return session;
+    }
+  },
+
+  // Admin login with ID and password
+  async loginAdmin(loginId: string, password: string): Promise<AdminAuthSession> {
+    const cleanId = loginId.trim();
+    const cleanPw = password.trim();
+
+    if (!cleanId || !cleanPw) {
+      throw new Error("Admin Login ID and Password are required.");
+    }
+
+    try {
+      const res = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loginId: cleanId, password: cleanPw }),
+      });
+
+      if (res.ok) {
+        const data = await tryParseJson(res);
+        const session: AdminAuthSession = {
+          adminId: data.adminId || cleanId,
+          token: data.token,
+          loginTime: data.loginTime || new Date().toISOString(),
+          role: "admin",
+        };
+        try {
+          sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+          localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+        } catch {}
+        return session;
+      } else {
+        const err = await tryParseJson(res);
+        throw new Error(err.error || "Invalid Admin Login ID or Password.");
+      }
+    } catch (err: any) {
+      // If server returned explicit error, re-throw
+      if (err.message && !err.message.includes("fetch") && !err.message.includes("network") && !err.message.includes("Failed to fetch")) {
+        throw err;
+      }
+
+      // Static hosting fallback
+      const creds = getLocalAdminCreds();
+      if (!creds || !creds.loginId || !creds.password) {
+        throw new Error("No admin account configured yet. Please register your Admin Login ID and Password.");
+      }
+
+      const idMatches = cleanId.toLowerCase() === creds.loginId.toLowerCase();
+      const pwMatches = cleanPw === creds.password;
+
+      if (idMatches && pwMatches) {
+        const session: AdminAuthSession = {
+          adminId: creds.loginId,
+          token: `rp_local_${Date.now()}`,
+          loginTime: new Date().toISOString(),
+          role: "admin",
+        };
+        try {
+          sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+          localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+        } catch {}
+        return session;
+      }
+      throw new Error("Invalid Admin credentials. Attendees cannot access this studio. Check Login ID and Password.");
+    }
+  },
+
+  // Admin logout
+  async logoutAdmin(): Promise<void> {
+    try {
+      const sess = this.getAdminSession();
+      if (sess?.token) {
+        await fetch("/api/admin/logout", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${sess.token}` },
+        });
+      }
+    } catch {}
+    try {
+      sessionStorage.removeItem(ADMIN_SESSION_KEY);
+      localStorage.removeItem(ADMIN_SESSION_KEY);
+    } catch {}
+  },
+
+  // Change Admin Credentials
+  async changeAdminCredentials(
+    currentPassword: string,
+    newLoginId: string,
+    newPassword: string
+  ): Promise<{ success: boolean; message: string; adminId?: string }> {
+    try {
+      const sess = this.getAdminSession();
+      const res = await fetch("/api/admin/change-credentials", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(sess?.token ? { Authorization: `Bearer ${sess.token}` } : {}),
+        },
+        body: JSON.stringify({ currentPassword, newLoginId, newPassword }),
+      });
+
+      if (res.ok) {
+        const data = await tryParseJson(res);
+        saveLocalAdminCreds({ loginId: newLoginId.trim(), password: newPassword.trim() });
+        if (sess) {
+          sess.adminId = newLoginId.trim();
+          sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sess));
+          localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sess));
+        }
+        return data;
+      }
+      const err = await tryParseJson(res);
+      throw new Error(err.error || "Failed to update admin credentials.");
+    } catch (err: any) {
+      if (err.message && !err.message.includes("fetch") && !err.message.includes("network")) {
+        throw err;
+      }
+      // Local fallback
+      const creds = getLocalAdminCreds();
+      if (currentPassword.trim() !== creds.password) {
+        throw new Error("Current admin password does not match.");
+      }
+      if (newLoginId.trim().length < 3) {
+        throw new Error("New Admin ID must be at least 3 characters.");
+      }
+      if (newPassword.trim().length < 6) {
+        throw new Error("New password must be at least 6 characters long.");
+      }
+      saveLocalAdminCreds({ loginId: newLoginId.trim(), password: newPassword.trim() });
+      const sess = this.getAdminSession();
+      if (sess) {
+        sess.adminId = newLoginId.trim();
+        sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sess));
+        localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sess));
+      }
+      return { success: true, message: "Admin credentials successfully updated.", adminId: newLoginId.trim() };
+    }
+  },
+
+  // Event Training Profile persistence
+  getEventTrainingProfile(): EventTrainingProfile {
+    try {
+      const stored = localStorage.getItem("recallpass_event_training_profile");
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch {}
+    return {
+      domain: "Cloud Infrastructure & Distributed Systems",
+      customTerms: ["Microservices", "Circuit Breaker", "Bulkheading", "Idempotency", "Redis Cluster", "RPC", "Latency p99"],
+      speakerContext: "Principal Systems Architect explaining resilient high-concurrency cloud patterns",
+      qaFormatPrompt: "Audience Q&A at aisle microphones focusing on production outages and database tradeoffs",
+      targetCadence: "realtime",
+      notesFocus: "technical",
+      isLiveTrained: true,
+    };
+  },
+
+  saveEventTrainingProfile(profile: EventTrainingProfile): void {
+    try {
+      localStorage.setItem("recallpass_event_training_profile", JSON.stringify(profile));
+    } catch {}
   },
 };
 

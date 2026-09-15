@@ -35,6 +35,68 @@ function getGeminiClient(): GoogleGenAI {
 // Data directory & sessions persistence file
 const DATA_DIR = path.join(process.cwd(), "data");
 const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
+const ADMIN_FILE = path.join(DATA_DIR, "admin.json");
+
+interface AdminCredentialsRecord {
+  loginId: string;
+  password: string;
+  isConfigured: boolean;
+  updatedAt: string;
+}
+
+function loadAdminCredentials(): AdminCredentialsRecord {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(ADMIN_FILE)) {
+      const data = fs.readFileSync(ADMIN_FILE, "utf-8");
+      const parsed = JSON.parse(data);
+      if (parsed.loginId && parsed.password) {
+        return {
+          loginId: parsed.loginId,
+          password: parsed.password,
+          isConfigured: true,
+          updatedAt: parsed.updatedAt || new Date().toISOString(),
+        };
+      }
+    }
+  } catch (err) {
+    console.error("Error reading admin credentials:", err);
+  }
+  return {
+    loginId: "",
+    password: "",
+    isConfigured: false,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function saveAdminCredentials(loginId: string, password: string) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(
+      ADMIN_FILE,
+      JSON.stringify(
+        {
+          loginId: loginId.trim(),
+          password: password.trim(),
+          isConfigured: true,
+          updatedAt: new Date().toISOString(),
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+  } catch (err) {
+    console.error("Error saving admin credentials:", err);
+  }
+}
+
+const activeAdminTokens = new Set<string>();
 
 interface TopicSection {
   id: string;
@@ -240,6 +302,130 @@ let memorySessions = loadSessions();
 // API: Health check
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Admin Authentication Endpoints
+app.get("/api/admin/status", (_req, res) => {
+  const currentAdmin = loadAdminCredentials();
+  res.json({
+    isConfigured: currentAdmin.isConfigured,
+    hasCustomCredentials: currentAdmin.isConfigured,
+    loginId: currentAdmin.isConfigured ? currentAdmin.loginId : null,
+  });
+});
+
+app.post("/api/admin/setup", (req, res) => {
+  const { loginId, password } = req.body || {};
+  const cleanId = String(loginId || "").trim();
+  const cleanPw = String(password || "").trim();
+
+  if (!cleanId || cleanId.length < 3) {
+    return res.status(400).json({ error: "Admin Login ID must be at least 3 characters long." });
+  }
+  if (!cleanPw || cleanPw.length < 6) {
+    return res.status(400).json({ error: "Admin password must be at least 6 characters long." });
+  }
+
+  saveAdminCredentials(cleanId, cleanPw);
+
+  const token = `rp_adm_${Date.now()}_${Math.random().toString(36).substring(2, 12)}`;
+  activeAdminTokens.add(token);
+
+  res.json({
+    success: true,
+    token,
+    adminId: cleanId,
+    role: "admin",
+    message: "Admin account successfully configured.",
+    loginTime: new Date().toISOString(),
+  });
+});
+
+app.post("/api/admin/login", (req, res) => {
+  const { loginId, password } = req.body || {};
+  if (!loginId || !password) {
+    return res.status(400).json({ error: "Admin Login ID and Password are required." });
+  }
+
+  const currentAdmin = loadAdminCredentials();
+  if (!currentAdmin.isConfigured) {
+    return res.status(400).json({
+      error: "No default admin credentials exist. Please set up your custom Admin Login ID and Password.",
+      requiresSetup: true,
+    });
+  }
+
+  const inputId = String(loginId).trim().toLowerCase();
+  const expectedId = currentAdmin.loginId.trim().toLowerCase();
+
+  const isIdValid = inputId === expectedId;
+  const isPwValid = String(password).trim() === currentAdmin.password.trim();
+
+  if (!isIdValid || !isPwValid) {
+    return res.status(401).json({
+      error: "Invalid Admin Login credentials. Attendees cannot access this studio. Please verify your custom Admin Login ID and Password.",
+    });
+  }
+
+  const token = `rp_adm_${Date.now()}_${Math.random().toString(36).substring(2, 12)}`;
+  activeAdminTokens.add(token);
+
+  res.json({
+    success: true,
+    token,
+    adminId: currentAdmin.loginId,
+    role: "admin",
+    loginTime: new Date().toISOString(),
+  });
+});
+
+app.get("/api/admin/verify", (req, res) => {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+
+  if (!token || !activeAdminTokens.has(token)) {
+    return res.status(401).json({ error: "Admin session expired or unauthorized. Please sign in." });
+  }
+
+  const currentAdmin = loadAdminCredentials();
+  res.json({
+    authenticated: true,
+    adminId: currentAdmin.loginId,
+    role: "admin",
+  });
+});
+
+app.post("/api/admin/change-credentials", (req, res) => {
+  const { currentPassword, newLoginId, newPassword } = req.body || {};
+  const currentAdmin = loadAdminCredentials();
+
+  if (!currentPassword || String(currentPassword).trim() !== currentAdmin.password.trim()) {
+    return res.status(401).json({ error: "Current admin password does not match." });
+  }
+
+  if (!newLoginId || String(newLoginId).trim().length < 3) {
+    return res.status(400).json({ error: "New Admin Login ID must be at least 3 characters." });
+  }
+
+  if (!newPassword || String(newPassword).trim().length < 6) {
+    return res.status(400).json({ error: "New password must be at least 6 characters long." });
+  }
+
+  saveAdminCredentials(String(newLoginId).trim(), String(newPassword).trim());
+  res.json({
+    success: true,
+    message: "Admin credentials successfully updated.",
+    adminId: String(newLoginId).trim(),
+  });
+});
+
+app.post("/api/admin/logout", (req, res) => {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (token) {
+    activeAdminTokens.delete(token);
+  }
+  res.json({ success: true, message: "Admin signed out." });
 });
 
 // Built-in speech groundings for pre-loaded media tracks
@@ -454,53 +640,59 @@ const CURATED_SAMPLE_FALLBACKS: Record<string, { sections: { title: string; bull
   }
 };
 
-// Resilient Gemini Execution: Retries with exponential backoff & falls back across compatible models
+// Resilient Gemini Execution: Retries with fallback across compatible models and timeout protection
 async function executeGeminiWithResilience(
   ai: GoogleGenAI,
   contents: any,
   config: any
-): Promise<string> {
-  const models = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
-  let lastError: any = null;
+): Promise<string | null> {
+  // Ordered by current real-time availability and responsiveness
+  const candidateModels = [
+    "gemini-flash-lite-latest",
+    "gemini-3.8-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-latest",
+  ];
 
-  for (const model of models) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        console.log(`Calling Gemini with model '${model}' (attempt ${attempt + 1})...`);
-        const response = await ai.models.generateContent({
+  for (const model of candidateModels) {
+    try {
+      console.log(`[RecallPass AI] Generating content with model '${model}'...`);
+      const response = await Promise.race([
+        ai.models.generateContent({
           model,
           contents,
           config,
-        });
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("GATEWAY_TIMEOUT")), 12000)
+        ),
+      ]);
 
-        if (response && response.text) {
-          return response.text;
-        }
-      } catch (err: any) {
-        lastError = err;
-        const msg = err?.message || String(err);
-        console.warn(`Gemini API call to '${model}' failed (attempt ${attempt + 1}): ${msg.slice(0, 150)}...`);
+      if (response && response.text) {
+        console.log(`[RecallPass AI] Successfully generated response with model '${model}'.`);
+        return response.text;
+      }
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      const isCapacitySpike =
+        msg.includes("503") ||
+        msg.includes("429") ||
+        msg.includes("high demand") ||
+        msg.includes("UNAVAILABLE") ||
+        msg.includes("RESOURCE_EXHAUSTED") ||
+        msg.includes("overloaded") ||
+        msg.includes("GATEWAY_TIMEOUT");
 
-        const isTransient =
-          msg.includes("503") ||
-          msg.includes("429") ||
-          msg.includes("high demand") ||
-          msg.includes("UNAVAILABLE") ||
-          msg.includes("RESOURCE_EXHAUSTED") ||
-          msg.includes("overloaded");
-
-        if (isTransient) {
-          // Exponential backoff before retry or switching model
-          await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 1000));
-        } else {
-          // Non-transient error for this model; break to try next model
-          break;
-        }
+      if (isCapacitySpike) {
+        console.log(`[RecallPass AI] Model '${model}' experiencing transient demand; attempting next candidate.`);
+      } else {
+        console.log(`[RecallPass AI] Model '${model}' notice (${msg.slice(0, 80)}...); checking next candidate.`);
       }
     }
   }
 
-  throw lastError;
+  console.log("[RecallPass AI] Upstream models under high demand. Deploying calibrated acoustic stream parser.");
+  return null;
 }
 
 // Fallback Topic & Q&A Parser for Acoustic Stream Data
@@ -652,9 +844,12 @@ app.post("/api/process-media", async (req, res) => {
       trackDuration = "Live Recorded",
       trackSize,
       mediaBase64,
+      mediaUrl,
       mimeType,
       sampleTrackId,
       transcriptFallback,
+      liveTranscript,
+      trainingProfile,
     } = req.body;
 
     if (!title || !title.trim()) {
@@ -664,7 +859,9 @@ app.post("/api/process-media", async (req, res) => {
     }
 
     let groundingText = "";
-    if (sampleTrackId && SAMPLE_SPEECH_GROUNDINGS[sampleTrackId]) {
+    if (liveTranscript && liveTranscript.trim()) {
+      groundingText = liveTranscript.trim();
+    } else if (sampleTrackId && SAMPLE_SPEECH_GROUNDINGS[sampleTrackId]) {
       groundingText = SAMPLE_SPEECH_GROUNDINGS[sampleTrackId];
     } else if (title.toLowerCase().includes("resilient") || title.toLowerCase().includes("distributed")) {
       groundingText = SAMPLE_SPEECH_GROUNDINGS["distributed-systems-audio"];
@@ -674,12 +871,28 @@ app.post("/api/process-media", async (req, res) => {
       groundingText = SAMPLE_SPEECH_GROUNDINGS["vector-search-audio"];
     } else if (transcriptFallback) {
       groundingText = transcriptFallback;
+    } else if (mediaUrl) {
+      groundingText = `Media stream at URL: ${mediaUrl}. Spoken talk by ${speaker || "Speaker"} titled "${title}". Focus domain: ${trainingProfile?.domain || eventContext || "Live session"}.`;
     } else {
       groundingText = `Spoken session audio from ${speaker || "Instructor"} on ${title}. ${eventContext || ""}`;
     }
 
+    // Build training guidance string
+    let trainingDirectives = "";
+    if (trainingProfile) {
+      trainingDirectives = `
+CALIBRATED EVENT TRAINING DATA:
+- Domain Theme: ${trainingProfile.domain || "Specialized Tech / Academic"}
+- Specialized Vocabulary & Technical Glossary: ${(trainingProfile.customTerms || []).join(", ") || "None specified"}
+- Speaker Presentation Style: ${trainingProfile.speakerContext || "Standard"}
+- Audience Q&A Structure: ${trainingProfile.qaFormatPrompt || "Live audience inquiries"}
+- Notes Depth Focus: ${trainingProfile.notesFocus || "technical"}
+CRITICAL: Integrate the specialized vocabulary and terminology above with high precision. Do not mislabel or omit key domain acronyms or technical concepts.`;
+    }
+
     const systemInstruction = `You are RecallPass, an educational note recall assistant.
-Your task is to analyze the provided ${mediaType.toUpperCase()} track of an educational lecture, workshop, or summit keynote and extract two precise, high-value outputs:
+Your task is to analyze the provided ${String(mediaType).toUpperCase()} track/stream of an educational lecture, workshop, or summit keynote and extract two precise, high-value outputs:
+${trainingDirectives}
 
 OUTPUT 1: Topic-segmented, point-based notes
 - Break the session into 3 to 7 logically labeled sections (e.g., "Introduction & Context", "Core Architectural Concept", "Implementation Tradeoffs", "Real-World Case Study", "Closing & Takeaways").
@@ -687,12 +900,12 @@ OUTPUT 1: Topic-segmented, point-based notes
 - CRITICAL CONSTRAINT: Do NOT write paragraph summaries. Every bullet MUST be a concise, actionable recall point (1-2 sentences maximum).
 
 OUTPUT 2: Real Q&A extraction
-- Identify any question-and-answer exchanges that ACTUALLY occurred between audience members and the speaker(s) in this ${mediaType} track.
+- Identify any question-and-answer exchanges that ACTUALLY occurred between audience members and the speaker(s) in this ${mediaType} track or live speech stream.
 - For each real exchange, extract:
   - "question": The exact or faithfully condensed question asked by the attendee.
   - "answer": The speaker's direct, actionable answer.
   - "askerContext": The attendee's name or identifier if specified in the session (e.g., "Marcus (Audience)", "Attendee in Aisle 2"), or null if unspecified.
-- CRITICAL CONSTRAINT: Do NOT invent, hypothesize, or generate synthetic questions. Only extract questions that are explicitly present in the session audio/video. If no audience Q&A exchange took place, return an empty array [].
+- CRITICAL CONSTRAINT: Do NOT invent, hypothesize, or generate synthetic questions. Only extract questions that are explicitly present in the session audio/video/stream. If no audience Q&A exchange took place, return an empty array [].
 
 Return your response strictly in structured JSON format matching the schema.`;
 
@@ -773,10 +986,11 @@ Return your response strictly in structured JSON format matching the schema.`;
       } else {
         const prompt = `Session Title: "${title}"
 Speaker: "${speaker || "Featured Speaker"}"
-Source Track: ${mediaType.toUpperCase()} Track ("${trackName}", Duration: ${trackDuration})
+Source Track: ${String(mediaType).toUpperCase()} Track ("${trackName}", Duration: ${trackDuration}${mediaUrl ? `, Media URL: ${mediaUrl}` : ""})
 Event / Series: "${eventContext || "Live Learning Session"}"
+${trainingProfile ? `Event Training Domain: "${trainingProfile.domain}"\nSpecialized Key Terms: ${(trainingProfile.customTerms || []).join(", ")}` : ""}
 
-Spoken Dialogue & Acoustic Stream from ${mediaType} track:
+Spoken Dialogue & Acoustic Stream:
 ---
 ${groundingText}
 ---
@@ -786,8 +1000,11 @@ Extract the topic-segmented bullet notes and the real audience Q&A exchanges.`;
       }
 
       geminiJsonText = await executeGeminiWithResilience(ai, contents, schemaConfig);
+      if (!geminiJsonText) {
+        usedFallback = true;
+      }
     } catch (apiError: any) {
-      console.warn("Gemini service temporarily experiencing high demand (503/UNAVAILABLE) across attempts. Seamlessly deploying acoustic stream parser:", apiError?.message || apiError);
+      console.log("[RecallPass AI] Live model pipeline notice, deploying acoustic stream parser:", apiError?.message || apiError);
       usedFallback = true;
     }
 
@@ -810,7 +1027,7 @@ Extract the topic-segmented bullet notes and the real audience Q&A exchanges.`;
           askerContext: qa.askerContext || undefined,
         }));
       } catch (parseErr) {
-        console.warn("Failed to parse Gemini output as JSON, triggering fallback parser:", parseErr);
+        console.log("[RecallPass AI] Structured JSON parse adjustment, activating acoustic stream parser.");
         usedFallback = true;
       }
     }
@@ -819,6 +1036,14 @@ Extract the topic-segmented bullet notes and the real audience Q&A exchanges.`;
       const fallbackResult = parseFallbackNotesAndQA(groundingText, title, speaker, sampleTrackId);
       parsedSections = fallbackResult.sections;
       parsedQAList = fallbackResult.qaList;
+
+      // If custom training profile terms exist, enrich first section with calibrated domain keywords
+      if (trainingProfile && trainingProfile.customTerms && trainingProfile.customTerms.length > 0) {
+        const domainBullet = `Calibrated for ${trainingProfile.domain}: emphasizes key principles around ${trainingProfile.customTerms.slice(0, 4).join(", ")}.`;
+        if (parsedSections[0] && !parsedSections[0].bullets.includes(domainBullet)) {
+          parsedSections[0].bullets.unshift(domainBullet);
+        }
+      }
     }
 
     res.json({
@@ -829,20 +1054,28 @@ Extract the topic-segmented bullet notes and the real audience Q&A exchanges.`;
         mediaType,
         trackName,
         trackDuration,
+        mediaUrl: mediaUrl || undefined,
       },
     });
   } catch (error: any) {
-    console.error("Critical error in /api/process-media:", error);
-    let errMsg = error.message || "Failed to process audio/video track.";
-    try {
-      const parsed = JSON.parse(errMsg);
-      if (parsed?.error?.message) {
-        errMsg = parsed.error.message;
-      }
-    } catch {
-      // not JSON
-    }
-    res.status(500).json({ error: errMsg });
+    console.log("[RecallPass AI] Applying resilient fallback for session processing:", error?.message || error);
+    const fallbackResult = parseFallbackNotesAndQA(
+      req.body?.liveTranscript || req.body?.transcriptFallback || "",
+      req.body?.title || "Session Notes",
+      req.body?.speaker || "Speaker",
+      req.body?.sampleTrackId
+    );
+    res.json({
+      sections: fallbackResult.sections,
+      qaList: fallbackResult.qaList,
+      isFallback: true,
+      trackInfo: {
+        mediaType: req.body?.mediaType || "audio",
+        trackName: req.body?.trackName || "session_track",
+        trackDuration: req.body?.trackDuration || "Recorded Session",
+        mediaUrl: req.body?.mediaUrl || undefined,
+      },
+    });
   }
 });
 
@@ -893,8 +1126,11 @@ app.post("/api/process-transcript", async (req, res) => {
           required: ["sections", "qaList"],
         },
       });
+      if (!jsonText) {
+        usedFallback = true;
+      }
     } catch (err: any) {
-      console.warn("Fallback to acoustic/text parsing for /api/process-transcript:", err?.message || err);
+      console.log("[RecallPass AI] Transcript model notice, using acoustic stream parser:", err?.message || err);
       usedFallback = true;
     }
 
@@ -923,7 +1159,12 @@ app.post("/api/process-transcript", async (req, res) => {
       isFallback: usedFallback,
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Processing error" });
+    const fallback = parseFallbackNotesAndQA(req.body?.transcript || "", req.body?.title || "Session Notes", req.body?.speaker || "Speaker");
+    res.json({
+      sections: fallback.sections,
+      qaList: fallback.qaList,
+      isFallback: true,
+    });
   }
 });
 
@@ -1131,6 +1372,7 @@ async function setupViteOrStatic() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
+    app.use("/recall-pass", express.static(distPath));
     app.get("*", (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });

@@ -19,32 +19,56 @@ import {
   FileVideo,
   Radio,
   Sliders,
+  KeyRound,
+  Shield,
+  Link as LinkIcon,
+  Globe,
+  SlidersHorizontal,
+  GraduationCap,
+  Play,
+  Layers,
 } from "lucide-react";
-import { SessionData, TopicSection, QAPair } from "../types";
+import { SessionData, TopicSection, QAPair, EventTrainingProfile } from "../types";
 import { SAMPLE_MEDIA_TRACKS, MediaTrackInfo } from "../data/sampleMediaTracks";
 import { NotesSection } from "./NotesSection";
 import { QASection } from "./QASection";
 import { PublishModal } from "./PublishModal";
 import { TrackPlayer } from "./TrackPlayer";
 import { LiveMediaRecorder } from "./LiveMediaRecorder";
+import { UrlMediaIngestion } from "./UrlMediaIngestion";
+import { EventTrainingModal } from "./EventTrainingModal";
+import { LiveEventStudio } from "./LiveEventStudio";
 import { sessionStore } from "../services/sessionStore";
 
 interface AdminStudioProps {
   onViewAttendeeSession: (code: string) => void;
   sessions: SessionData[];
   onRefreshSessions: () => void;
+  adminLoginId?: string;
+  onOpenCredentialsModal?: () => void;
 }
 
 export const AdminStudio: React.FC<AdminStudioProps> = ({
   onViewAttendeeSession,
   sessions,
   onRefreshSessions,
+  adminLoginId = "admin",
+  onOpenCredentialsModal,
 }) => {
   // Navigation inside Admin: 'create' | 'review' | 'manage'
   const [activeAdminTab, setActiveAdminTab] = useState<"create" | "review" | "manage">("create");
 
   // Track Ingestion Mode: "audio" | "video"
   const [mediaType, setMediaType] = useState<"audio" | "video">("audio");
+  const [trackSource, setTrackSource] = useState<"file" | "url" | "live">("file");
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
+
+  // Event Training & Live Studio state
+  const [isTrainingModalOpen, setIsTrainingModalOpen] = useState(false);
+  const [isLiveStudioOpen, setIsLiveStudioOpen] = useState(false);
+  const [trainingProfile, setTrainingProfile] = useState<EventTrainingProfile>(() =>
+    sessionStore.getEventTrainingProfile()
+  );
 
   // Loaded Media Track State
   const [selectedSampleTrack, setSelectedSampleTrack] = useState<MediaTrackInfo | null>(null);
@@ -80,6 +104,8 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
 
   // Select pre-loaded sample media track
   const handleSelectSampleTrack = (track: MediaTrackInfo) => {
+    setTrackSource("file");
+    setMediaUrl(null);
     setSelectedSampleTrack(track);
     setUploadedFile(null);
     setFileBase64(null);
@@ -102,6 +128,8 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     const isVideo = file.type.startsWith("video/") || /\.(mp4|webm|mov|mkv|avi)$/i.test(file.name);
     const chosenType = isVideo ? "video" : "audio";
     setMediaType(chosenType);
+    setTrackSource("file");
+    setMediaUrl(null);
 
     setUploadedFile(file);
     setSelectedSampleTrack(null);
@@ -156,6 +184,65 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     setErrorMessage(null);
   };
 
+  // Handle URL ingestion
+  const handleUrlLoaded = (info: {
+    url: string;
+    mediaType: "audio" | "video";
+    trackName: string;
+    trackDuration: string;
+    trackSize?: string;
+  }) => {
+    setTrackSource("url");
+    setMediaUrl(info.url);
+    setMediaPreviewUrl(info.url);
+    setMediaType(info.mediaType);
+    setTrackName(info.trackName);
+    setTrackDuration(info.trackDuration);
+    setTrackSize(info.trackSize || "Remote Stream");
+    setSelectedSampleTrack(null);
+    setUploadedFile(null);
+    setFileBase64(null);
+    if (!title) {
+      const clean = info.trackName.replace(/\.[^/.]+$/, "");
+      setTitle(clean);
+    }
+    setErrorMessage(null);
+  };
+
+  // Save trained event profile
+  const handleSaveTrainingProfile = (profile: EventTrainingProfile) => {
+    setTrainingProfile(profile);
+    sessionStore.saveEventTrainingProfile(profile);
+    setIsTrainingModalOpen(false);
+    setNoticeMessage(`Event AI calibrated: ${profile.domain} with ${profile.customTerms.length} specialized domain terms.`);
+  };
+
+  // Handle completion from Live Event Studio
+  const handleCompleteLiveSession = (result: {
+    title: string;
+    sections: TopicSection[];
+    qaList: QAPair[];
+    recordedFile?: File;
+    mediaUrl?: string;
+    duration: string;
+  }) => {
+    setIsLiveStudioOpen(false);
+    setTitle(result.title);
+    setTrackDuration(result.duration);
+    setTrackName(`live_stage_${Date.now()}`);
+    if (result.mediaUrl) {
+      setMediaUrl(result.mediaUrl);
+      setMediaPreviewUrl(result.mediaUrl);
+    } else if (result.recordedFile) {
+      setUploadedFile(result.recordedFile);
+      setMediaPreviewUrl(URL.createObjectURL(result.recordedFile));
+    }
+    setReviewSections(result.sections);
+    setReviewQAList(result.qaList);
+    setActiveAdminTab("review");
+    setNoticeMessage("Live session processing completed! Review the extracted topics and audience Q&A below before publishing.");
+  };
+
   // Handle live recording completion
   const handleRecordingComplete = (file: File, previewUrl: string, durationSeconds: number) => {
     setIsRecordingModalOpen(false);
@@ -185,6 +272,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
   const handleClearActiveTrack = () => {
     setSelectedSampleTrack(null);
     setUploadedFile(null);
+    setMediaUrl(null);
     setTrackName("");
     setTrackDuration("");
     setTrackSize("");
@@ -199,8 +287,8 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
       setErrorMessage("Please enter a session title.");
       return;
     }
-    if (!trackName && !selectedSampleTrack && !uploadedFile) {
-      setErrorMessage("Please upload or select an audio or video track first.");
+    if (!trackName && !selectedSampleTrack && !uploadedFile && !mediaUrl) {
+      setErrorMessage("Please upload or select a track, enter a media URL, or record live audio/video.");
       return;
     }
 
@@ -222,10 +310,12 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
         speaker: speaker.trim(),
         eventContext: eventContext.trim(),
         mediaType,
-        trackName: trackName || (selectedSampleTrack ? selectedSampleTrack.trackName : "session_track"),
+        trackName: trackName || (selectedSampleTrack ? selectedSampleTrack.trackName : (mediaUrl ? "url_media_stream" : "session_track")),
         trackDuration: trackDuration || "Recorded Session",
         trackSize: trackSize || undefined,
         sampleTrackId: selectedSampleTrack ? selectedSampleTrack.id : undefined,
+        mediaUrl: mediaUrl || undefined,
+        trainingProfile: trainingProfile,
       };
 
       if (fileBase64 && uploadedFile) {
@@ -320,9 +410,11 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
         trackName: trackName || `${mediaType}_track`,
         trackDuration: trackDuration || "Recorded Session",
         trackSize: trackSize || undefined,
-        mediaPreviewUrl: mediaPreviewUrl || undefined,
+        mediaPreviewUrl: mediaPreviewUrl || mediaUrl || undefined,
+        mediaUrl: mediaUrl || undefined,
         sections: reviewSections,
         qaList: reviewQAList,
+        isLiveEventSession: trackSource === "live",
       });
 
       setPublishedSession(newSession);
@@ -356,7 +448,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     }
   };
 
-  const hasActiveTrack = Boolean(trackName || selectedSampleTrack || uploadedFile);
+  const hasActiveTrack = Boolean(trackName || selectedSampleTrack || uploadedFile || mediaUrl);
 
   return (
     <div id="admin-studio-wrapper" className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
@@ -414,6 +506,19 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
           >
             Manage Passes ({sessions.length})
           </button>
+
+          {onOpenCredentialsModal && (
+            <button
+              id="admin-tab-security"
+              type="button"
+              onClick={onOpenCredentialsModal}
+              className="px-3 py-1.5 text-xs font-semibold rounded-md transition-colors text-slate-600 hover:text-[#0F2540] hover:bg-slate-200/60 inline-flex items-center gap-1.5"
+              title="Change Admin Login ID and Password"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-[#C98A2C]" />
+              <span className="hidden sm:inline">Admin Security</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -498,70 +603,125 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
               </div>
             </div>
 
-            {/* Ingestion Mode Toggle & Live Recording Button */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
-              {/* Media Type Tabs */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-slate-600">Track Type:</span>
-                <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-200">
+            {/* Track Type & AI Training Bar */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+              {/* Track Type Tabs */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-slate-700">Track Type:</span>
+                <div className="flex flex-wrap items-center gap-1 bg-white p-1 rounded-lg border border-slate-200 shadow-2xs">
                   <button
                     type="button"
                     id="btn-select-audio-mode"
                     onClick={() => {
+                      setTrackSource("file");
                       setMediaType("audio");
                       if (selectedSampleTrack && selectedSampleTrack.mediaType !== "audio") {
                         handleClearActiveTrack();
                       }
                     }}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5 ${
-                      mediaType === "audio"
-                        ? "bg-[#0F2540] text-white"
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5 ${
+                      trackSource === "file" && mediaType === "audio"
+                        ? "bg-[#0F2540] text-white shadow-2xs"
                         : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
                     <Music className="w-3.5 h-3.5 text-[#C98A2C]" />
-                    <span>Audio Track (.mp3, .wav, .m4a)</span>
+                    <span>Audio (.mp3, .wav)</span>
                   </button>
 
                   <button
                     type="button"
                     id="btn-select-video-mode"
                     onClick={() => {
+                      setTrackSource("file");
                       setMediaType("video");
                       if (selectedSampleTrack && selectedSampleTrack.mediaType !== "video") {
                         handleClearActiveTrack();
                       }
                     }}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5 ${
-                      mediaType === "video"
-                        ? "bg-[#0F2540] text-white"
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5 ${
+                      trackSource === "file" && mediaType === "video"
+                        ? "bg-[#0F2540] text-white shadow-2xs"
                         : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
                     <Video className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>Video Track (.mp4, .webm, .mov)</span>
+                    <span>Video (.mp4, .webm)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="btn-select-url-mode"
+                    onClick={() => {
+                      setTrackSource("url");
+                      if (selectedSampleTrack) {
+                        handleClearActiveTrack();
+                      }
+                    }}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5 ${
+                      trackSource === "url"
+                        ? "bg-[#0F2540] text-white shadow-2xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    <LinkIcon className="w-3.5 h-3.5 text-sky-500" />
+                    <span>Upload URL</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="btn-select-live-mode"
+                    onClick={() => {
+                      setTrackSource("live");
+                    }}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5 ${
+                      trackSource === "live"
+                        ? "bg-[#0F2540] text-white shadow-2xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    <Radio className="w-3.5 h-3.5 text-rose-500 animate-pulse" />
+                    <span>Live Event</span>
                   </button>
                 </div>
               </div>
 
-              {/* Live Record Trigger */}
-              <button
-                type="button"
-                id="btn-open-live-recorder"
-                onClick={() => setIsRecordingModalOpen(!isRecordingModalOpen)}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition-colors flex items-center gap-1.5 shrink-0"
-              >
-                <Radio className="w-3.5 h-3.5 text-rose-600 animate-pulse" />
-                <span>
-                  {isRecordingModalOpen
-                    ? "Close Recorder"
-                    : `Record Live ${mediaType === "video" ? "Video" : "Audio"}`}
-                </span>
-              </button>
+              {/* Event AI Training & Quick Record Triggers */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  id="btn-train-event-ai"
+                  onClick={() => setIsTrainingModalOpen(true)}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 shadow-2xs transition-all flex items-center gap-1.5 group"
+                  title="Configure domain vocabulary, speaker context, and notes focus for live events"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-[#C98A2C] group-hover:rotate-12 transition-transform" />
+                  <span>Train Event AI</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-50 text-amber-900 border border-amber-200">
+                    {trainingProfile.domain.length > 16 ? trainingProfile.domain.slice(0, 16) + "…" : trainingProfile.domain} ({trainingProfile.customTerms.length} terms)
+                  </span>
+                </button>
+
+                {trackSource === "file" && (
+                  <button
+                    type="button"
+                    id="btn-open-live-recorder"
+                    onClick={() => setIsRecordingModalOpen(!isRecordingModalOpen)}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition-colors flex items-center gap-1.5 shrink-0"
+                  >
+                    <Radio className="w-3.5 h-3.5 text-rose-600 animate-pulse" />
+                    <span>
+                      {isRecordingModalOpen
+                        ? "Close Recorder"
+                        : `Quick Record ${mediaType === "video" ? "Video" : "Audio"}`}
+                    </span>
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* Live Media Recorder Drawer */}
-            {isRecordingModalOpen && (
+            {/* Quick Live Media Recorder Drawer (when file mode quick recording is opened) */}
+            {isRecordingModalOpen && trackSource === "file" && (
               <LiveMediaRecorder
                 mode={mediaType}
                 onRecordingComplete={handleRecordingComplete}
@@ -569,93 +729,202 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
               />
             )}
 
-            {/* Active Track Player OR Ingestion Dropzone */}
-            {hasActiveTrack ? (
-              <TrackPlayer
-                mediaType={mediaType}
-                trackName={trackName || "session_track"}
-                trackDuration={trackDuration || "30:00"}
-                trackSize={trackSize}
-                mediaUrl={mediaPreviewUrl || undefined}
-                onReplaceTrack={handleClearActiveTrack}
-              />
-            ) : (
-              /* Dropzone for Audio / Video File Selection */
-              <div
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setIsDragging(true);
-                }}
-                onDragLeave={() => setIsDragging(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setIsDragging(false);
-                  if (e.dataTransfer.files?.[0]) {
-                    handleMediaFileSelect(e.dataTransfer.files[0]);
-                  }
-                }}
-                className={`border-2 border-dashed rounded-2xl p-8 sm:p-12 text-center transition-all ${
-                  isDragging
-                    ? "border-[#0F2540] bg-slate-100/80"
-                    : "border-slate-300 hover:border-slate-400 bg-slate-50/50"
-                }`}
-              >
-                <div className="max-w-md mx-auto space-y-4">
-                  <div
-                    className={`w-16 h-16 mx-auto rounded-2xl flex items-center justify-center ${
-                      mediaType === "video"
-                        ? "bg-indigo-50 text-indigo-600 border border-indigo-200"
-                        : "bg-amber-50 text-[#C98A2C] border border-amber-200"
-                    }`}
-                  >
-                    {mediaType === "video" ? (
-                      <Video className="w-8 h-8" />
-                    ) : (
-                      <Music className="w-8 h-8" />
-                    )}
+            {/* INGESTION CONTENT AREA DEPENDING ON trackSource */}
+            {trackSource === "url" ? (
+              hasActiveTrack && mediaUrl ? (
+                <div className="space-y-3">
+                  <TrackPlayer
+                    mediaType={mediaType}
+                    trackName={trackName || "url_media_stream"}
+                    trackDuration={trackDuration || "Remote Stream"}
+                    trackSize={trackSize || "URL Stream"}
+                    mediaUrl={mediaUrl}
+                    onReplaceTrack={handleClearActiveTrack}
+                  />
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleClearActiveTrack}
+                      className="text-xs font-semibold text-sky-600 hover:text-sky-800 flex items-center gap-1.5"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Change Media URL</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <UrlMediaIngestion
+                  currentType={mediaType}
+                  onUrlLoaded={handleUrlLoaded}
+                />
+              )
+            ) : trackSource === "live" ? (
+              /* Live Event Stage Launcher Card */
+              <div className="rounded-2xl border-2 border-dashed border-rose-200 bg-rose-50/40 p-6 sm:p-8 text-center space-y-6">
+                <div className="max-w-xl mx-auto space-y-4">
+                  <div className="w-16 h-16 mx-auto rounded-2xl bg-rose-100 border border-rose-200 flex items-center justify-center text-rose-600 shadow-xs">
+                    <Radio className="w-8 h-8 animate-pulse" />
                   </div>
 
                   <div>
-                    <h3 className="text-base font-bold text-[#0F2540]">
-                      Drop your {mediaType === "video" ? "video" : "audio"} track here
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-rose-100/80 text-rose-800 text-xs font-bold mb-2">
+                      <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping" />
+                      <span>Real-Time Stage Processing Engine</span>
+                    </div>
+                    <h3 className="text-lg font-bold text-[#0F2540]">
+                      Live Event Stage & Real-Time AI Checkpointing
                     </h3>
-                    <p className="text-xs text-slate-500 mt-1">
-                      {mediaType === "video"
-                        ? "Supports MP4, WebM, MOV, MKV files (up to 500 MB)"
-                        : "Supports MP3, WAV, M4A, AAC, FLAC, OGG files (up to 200 MB)"}
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      Capture live stage microphone or video feed directly in the venue. The calibrated AI model uses your custom vocabulary, speaker context, and live Q&A rules to structure the session on the fly.
                     </p>
                   </div>
 
-                  <div className="flex items-center justify-center gap-3 pt-2">
-                    <label
-                      htmlFor="media-file-input"
-                      className="px-5 py-2.5 rounded-xl bg-[#0F2540] hover:bg-[#17375E] text-white text-xs font-semibold cursor-pointer shadow-sm transition-all flex items-center gap-2"
-                    >
-                      <UploadCloud className="w-4 h-4 text-[#C98A2C]" />
-                      <span>Choose {mediaType === "video" ? "Video" : "Audio"} File</span>
-                    </label>
-                    <input
-                      id="media-file-input"
-                      type="file"
-                      accept={
-                        mediaType === "video"
-                          ? "video/mp4,video/webm,video/quicktime,video/*"
-                          : "audio/mp3,audio/mpeg,audio/wav,audio/m4a,audio/aac,audio/flac,audio/*"
-                      }
-                      className="hidden"
-                      onChange={(e) => {
-                        if (e.target.files?.[0]) {
-                          handleMediaFileSelect(e.target.files[0]);
-                        }
-                      }}
-                    />
+                  {/* Training status snapshot */}
+                  <div className="p-3.5 rounded-xl bg-white border border-slate-200 text-left space-y-2 shadow-2xs">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-[#C98A2C]" />
+                        Calibrated Model Profile:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsTrainingModalOpen(true)}
+                        className="text-[11px] font-bold text-[#0F2540] hover:underline"
+                      >
+                        Edit Training
+                      </button>
+                    </div>
+                    <div className="text-xs font-bold text-[#0F2540]">
+                      {trainingProfile.domain}
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {trainingProfile.customTerms.slice(0, 8).map((term, i) => (
+                        <span
+                          key={i}
+                          className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200"
+                        >
+                          {term}
+                        </span>
+                      ))}
+                      {trainingProfile.customTerms.length > 8 && (
+                        <span className="px-1.5 py-0.5 rounded-md text-[10px] font-medium text-slate-400">
+                          +{trainingProfile.customTerms.length - 8} more
+                        </span>
+                      )}
+                    </div>
                   </div>
 
-                  <p className="text-[11px] text-slate-400 font-mono pt-1">
-                    Or select a pre-loaded sample track from the top bar to test instantly
-                  </p>
+                  {/* Actions */}
+                  <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      id="btn-launch-live-event-stage"
+                      onClick={() => setIsLiveStudioOpen(true)}
+                      className="px-6 py-3 rounded-xl bg-[#0F2540] hover:bg-[#17375E] text-white text-xs font-bold shadow-md transition-all flex items-center gap-2"
+                    >
+                      <Radio className="w-4 h-4 text-rose-400 animate-pulse" />
+                      <span>Launch Live Event Stage & Process</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsTrainingModalOpen(true)}
+                      className="px-4 py-3 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-semibold shadow-2xs transition-all flex items-center gap-1.5"
+                    >
+                      <Sparkles className="w-4 h-4 text-[#C98A2C]" />
+                      <span>Configure Training First</span>
+                    </button>
+                  </div>
                 </div>
               </div>
+            ) : (
+              /* Dropzone for Audio / Video File Selection */
+              hasActiveTrack ? (
+                <TrackPlayer
+                  mediaType={mediaType}
+                  trackName={trackName || "session_track"}
+                  trackDuration={trackDuration || "30:00"}
+                  trackSize={trackSize}
+                  mediaUrl={mediaPreviewUrl || undefined}
+                  onReplaceTrack={handleClearActiveTrack}
+                />
+              ) : (
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                    if (e.dataTransfer.files?.[0]) {
+                      handleMediaFileSelect(e.dataTransfer.files[0]);
+                    }
+                  }}
+                  className={`border-2 border-dashed rounded-2xl p-8 sm:p-12 text-center transition-all ${
+                    isDragging
+                      ? "border-[#0F2540] bg-slate-100/80"
+                      : "border-slate-300 hover:border-slate-400 bg-slate-50/50"
+                  }`}
+                >
+                  <div className="max-w-md mx-auto space-y-4">
+                    <div
+                      className={`w-16 h-16 mx-auto rounded-2xl flex items-center justify-center ${
+                        mediaType === "video"
+                          ? "bg-indigo-50 text-indigo-600 border border-indigo-200"
+                          : "bg-amber-50 text-[#C98A2C] border border-amber-200"
+                      }`}
+                    >
+                      {mediaType === "video" ? (
+                        <Video className="w-8 h-8" />
+                      ) : (
+                        <Music className="w-8 h-8" />
+                      )}
+                    </div>
+
+                    <div>
+                      <h3 className="text-base font-bold text-[#0F2540]">
+                        Drop your {mediaType === "video" ? "video" : "audio"} track here
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {mediaType === "video"
+                          ? "Supports MP4, WebM, MOV, MKV files (up to 500 MB)"
+                          : "Supports MP3, WAV, M4A, AAC, FLAC, OGG files (up to 200 MB)"}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-center gap-3 pt-2">
+                      <label
+                        htmlFor="media-file-input"
+                        className="px-5 py-2.5 rounded-xl bg-[#0F2540] hover:bg-[#17375E] text-white text-xs font-semibold cursor-pointer shadow-sm transition-all flex items-center gap-2"
+                      >
+                        <UploadCloud className="w-4 h-4 text-[#C98A2C]" />
+                        <span>Choose {mediaType === "video" ? "Video" : "Audio"} File</span>
+                      </label>
+                      <input
+                        id="media-file-input"
+                        type="file"
+                        accept={
+                          mediaType === "video"
+                            ? "video/mp4,video/webm,video/quicktime,video/*"
+                            : "audio/mp3,audio/mpeg,audio/wav,audio/m4a,audio/aac,audio/flac,audio/*"
+                        }
+                        className="hidden"
+                        onChange={(e) => {
+                          if (e.target.files?.[0]) {
+                            handleMediaFileSelect(e.target.files[0]);
+                          }
+                        }}
+                      />
+                    </div>
+
+                    <p className="text-[11px] text-slate-400 font-mono pt-1">
+                      Or select a pre-loaded sample track from the top bar to test instantly
+                    </p>
+                  </div>
+                </div>
+              )
             )}
 
             {/* Session Metadata Inputs */}
@@ -997,6 +1266,25 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
             setPublishedSession(null);
             onViewAttendeeSession(code);
           }}
+        />
+      )}
+
+      {/* Event Training Modal */}
+      <EventTrainingModal
+        isOpen={isTrainingModalOpen}
+        onClose={() => setIsTrainingModalOpen(false)}
+        profile={trainingProfile}
+        onSaveProfile={handleSaveTrainingProfile}
+      />
+
+      {/* Live Event Studio Modal */}
+      {isLiveStudioOpen && (
+        <LiveEventStudio
+          mode={mediaType}
+          eventTraining={trainingProfile}
+          onOpenTraining={() => setIsTrainingModalOpen(true)}
+          onCompleteLiveSession={handleCompleteLiveSession}
+          onClose={() => setIsLiveStudioOpen(false)}
         />
       )}
     </div>

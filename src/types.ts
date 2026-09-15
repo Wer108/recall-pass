@@ -22,28 +22,43 @@ export interface SessionData {
   isExpired?: boolean;
   sections: TopicSection[];
   qaList: QAPair[];
-  mediaType?: "audio" | "video";
+  mediaType?: "audio" | "video" | "url";
   trackName?: string;
   trackDuration?: string;
   trackSize?: string;
   mediaPreviewUrl?: string;
+  mediaUrl?: string;
   wordCount?: number;
   rawTranscriptSnippet?: string;
   published: boolean;
+  isLiveEventSession?: boolean;
+}
+
+export interface EventTrainingProfile {
+  domain: string;
+  customTerms: string[];
+  speakerContext: string;
+  qaFormatPrompt: string;
+  targetCadence: "realtime" | "interval" | "ondemand";
+  notesFocus: "technical" | "general" | "executive";
+  isLiveTrained: boolean;
 }
 
 export interface ProcessMediaRequest {
   title: string;
   speaker?: string;
   eventContext?: string;
-  mediaType: "audio" | "video";
+  mediaType: "audio" | "video" | "url";
   trackName: string;
   trackDuration?: string;
   trackSize?: string;
   mediaBase64?: string;
+  mediaUrl?: string;
   mimeType?: string;
   sampleTrackId?: string;
   transcriptFallback?: string;
+  liveTranscript?: string;
+  trainingProfile?: EventTrainingProfile;
 }
 
 export interface ProcessMediaResponse {
@@ -57,9 +72,10 @@ export interface ProcessMediaResponse {
     askerContext?: string;
   }>;
   trackInfo?: {
-    mediaType: "audio" | "video";
+    mediaType: "audio" | "video" | "url";
     trackName: string;
     trackDuration?: string;
+    mediaUrl?: string;
   };
   wordCount?: number;
 }
@@ -81,4 +97,11 @@ export interface ProcessTranscriptResponse {
     askerContext?: string;
   }>;
   wordCount: number;
+}
+
+export interface AdminAuthSession {
+  adminId: string;
+  token: string;
+  loginTime: string;
+  role: "admin";
 }

@@ -110,10 +110,7 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
     if (!session) return;
     try {
       setLoading(true);
-      const res = await fetch(`/api/sessions/${session.accessCode}/toggle-expired`, {
-        method: "POST",
-      });
-      const updated = await res.json();
+      const updated = await sessionStore.toggleExpired(session.accessCode);
       setSession(updated);
     } catch (err) {
       console.error("Failed to toggle expiry:", err);

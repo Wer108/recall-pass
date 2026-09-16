@@ -1,15 +1,5 @@
 {
-  "framework": "vite",
-  "cleanUrls": true,
   "rewrites": [
-    {
-      "source": "/recall-pass",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/recall-pass/(.*)",
-      "destination": "/index.html"
-    },
     {
       "source": "/(.*)",
       "destination": "/index.html"

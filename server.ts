@@ -1367,11 +1367,6 @@ app.delete("/api/sessions/:code", (req, res) => {
   res.json({ success: true, message: `Session ${codeParam} deleted.` });
 });
 
-// Graceful redirect for legacy or bookmarked /recall-pass subpaths to root
-app.get(["/recall-pass", "/recall-pass/*"], (_req, res) => {
-  res.redirect(301, "/");
-});
-
 // Fallback 404 for unmatched /api routes so they return JSON instead of HTML or plain text
 app.all("/api/*", (_req, res) => {
   res.status(404).json({ error: "API endpoint not found." });

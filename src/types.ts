@@ -62,6 +62,7 @@ export interface ProcessMediaRequest {
   sampleTrackId?: string;
   transcriptFallback?: string;
   liveTranscript?: string;
+  lectureNotesOrTranscript?: string;
   trainingProfile?: EventTrainingProfile;
 }
 

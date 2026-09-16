@@ -30,6 +30,7 @@ interface UrlMediaIngestionProps {
     youtubeId?: string;
     suggestedTitle?: string;
     suggestedSpeaker?: string;
+    suggestedNotesOrTranscript?: string;
     thumbnailUrl?: string;
   }) => void;
   currentType: "audio" | "video" | "youtube";
@@ -145,6 +146,7 @@ export const UrlMediaIngestion: React.FC<UrlMediaIngestionProps> = ({
         youtubeId: vid,
         suggestedTitle: titleToUse,
         suggestedSpeaker: speakerToUse,
+        suggestedNotesOrTranscript: preset?.description || info?.description || undefined,
         thumbnailUrl: info?.thumbnailUrl || `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
       });
     } catch {
@@ -156,6 +158,7 @@ export const UrlMediaIngestion: React.FC<UrlMediaIngestionProps> = ({
         trackDuration: "YouTube Stream",
         trackSize: "YouTube Stream",
         youtubeId: vid,
+        suggestedNotesOrTranscript: preset?.description || undefined,
         thumbnailUrl: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
       });
     }

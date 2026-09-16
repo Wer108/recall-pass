@@ -1,5 +1,6 @@
 import { SessionData, TopicSection, QAPair, AdminAuthSession, EventTrainingProfile } from "../types";
 import { SAMPLE_MEDIA_TRACKS } from "../data/sampleMediaTracks";
+import { generateExpandedStudentNotes } from "../utils/studentNoteGenerator";
 
 const STORAGE_KEY = "recallpass_sessions_v1";
 const ADMIN_SESSION_KEY = "recallpass_admin_session_v1";
@@ -453,63 +454,27 @@ export const sessionStore = {
       return parseClientTranscript(transcript, payload.title || sample.title, payload.speaker || sample.speaker);
     }
 
-    // Generic fallback for user-uploaded audio/video/YouTube on static hosts
+    // Dynamic, topic-specific expanded student note engine
     const isYouTube =
       payload.mediaType === "youtube" ||
       Boolean(payload.youtubeId) ||
-      (payload.mediaUrl && /(?:youtu\.be\/|youtube\.com)/.test(payload.mediaUrl));
+      Boolean(payload.mediaUrl && /(?:youtu\.be\/|youtube\.com)/.test(payload.mediaUrl));
 
-    const training = payload.trainingProfile;
-    const domainTermBullets =
-      training?.customTerms && training.customTerms.length > 0
-        ? [
-            `Trained domain focus on ${training.domain || "Applied Knowledge"}: emphasizes critical workflows around ${training.customTerms.slice(0, 4).join(", ")}.`,
-            `Specialized glossary: ${training.customTerms.slice(0, 8).join(" • ")}.`,
-          ]
-        : [];
+    const expandedResult = generateExpandedStudentNotes({
+      title: payload.title,
+      speaker: payload.speaker,
+      eventContext: payload.eventContext,
+      mediaType: isYouTube ? "youtube" : payload.mediaType || "audio",
+      trainingProfile: payload.trainingProfile,
+      lectureNotesOrTranscript: payload.lectureNotesOrTranscript || payload.liveTranscript || payload.transcriptFallback,
+      youtubeId: payload.youtubeId,
+      mediaUrl: payload.mediaUrl,
+      trackName: payload.trackName,
+    });
 
     return {
-      sections: [
-        {
-          id: `sec-${Date.now()}-1`,
-          title: isYouTube ? "Video Overview & Core Thesis" : "Session Overview & Core Objectives",
-          bullets: [
-            `${isYouTube ? "YouTube video track" : "Acoustic audio track"} ingested from ${payload.speaker || "Featured Speaker"}: "${payload.title || "Session"}".`,
-            ...domainTermBullets,
-            "Key principles segmented into concise, actionable recall takeaways.",
-            "Designed for immediate retention, revision, and permanent reference.",
-          ],
-        },
-        {
-          id: `sec-${Date.now()}-2`,
-          title: "Key Frameworks & Core Implementations",
-          bullets: [
-            "Primary paradigms and architectural considerations presented in the material.",
-            "Emphasis on verifiable patterns, failure modes, and implementation tradeoffs.",
-            "Practical methodology and systematic problem-solving steps demonstrated.",
-          ],
-        },
-        {
-          id: `sec-${Date.now()}-3`,
-          title: "Execution Guidelines & Summary",
-          bullets: [
-            "Actionable recommendations for practical application and project integration.",
-            "High-impact summary points for rapid review prior to practical exams or deployment.",
-            "Reference the original stream/recording for in-depth nuances and extended discussions.",
-          ],
-        },
-      ],
-      qaList: [
-        {
-          id: `qa-${Date.now()}-1`,
-          question: isYouTube
-            ? "What was the most critical takeaway emphasized by the presenter?"
-            : "How should attendees best apply these principles immediately?",
-          answer:
-            "Focus on the primary architectural constraints first, validate assumptions with small repeatable tests, and measure real-world performance against concrete thresholds.",
-          askerContext: isYouTube ? "Video Discussion" : "Audience Member",
-        },
-      ],
+      sections: expandedResult.sections,
+      qaList: expandedResult.qaList,
       isFallback: true,
       trackInfo: {
         mediaType: isYouTube ? "youtube" : payload.mediaType || "audio",

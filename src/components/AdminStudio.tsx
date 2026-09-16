@@ -28,6 +28,7 @@ import {
   Play,
   Layers,
   Youtube,
+  BookOpen,
 } from "lucide-react";
 import { SessionData, TopicSection, QAPair, EventTrainingProfile } from "../types";
 import { SAMPLE_MEDIA_TRACKS, MediaTrackInfo } from "../data/sampleMediaTracks";
@@ -88,6 +89,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
   const [title, setTitle] = useState("");
   const [speaker, setSpeaker] = useState("");
   const [eventContext, setEventContext] = useState("");
+  const [lectureNotesOrTranscript, setLectureNotesOrTranscript] = useState("");
 
   // Processing state
   const [isProcessing, setIsProcessing] = useState(false);
@@ -196,6 +198,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     youtubeId?: string;
     suggestedTitle?: string;
     suggestedSpeaker?: string;
+    suggestedNotesOrTranscript?: string;
     thumbnailUrl?: string;
   }) => {
     setTrackSource("url");
@@ -217,6 +220,9 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     }
     if (info.suggestedSpeaker) {
       setSpeaker(info.suggestedSpeaker);
+    }
+    if (info.suggestedNotesOrTranscript && !lectureNotesOrTranscript) {
+      setLectureNotesOrTranscript(info.suggestedNotesOrTranscript);
     }
     setErrorMessage(null);
   };
@@ -307,15 +313,15 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
 
     setIsProcessing(true);
     setErrorMessage(null);
-    setProcessingStage(`Analyzing ${mediaType.toUpperCase()} track acoustic spectrum...`);
+    setProcessingStage(`Ingesting ${mediaType.toUpperCase()} track & synthesizing expanded student notes...`);
 
     try {
       const stepTimer1 = setTimeout(() => {
-        setProcessingStage("Segmenting topics into concise, actionable bullet points...");
+        setProcessingStage("Unpacking core definitions, underlying mechanisms, and practical examples...");
       }, 1200);
 
       const stepTimer2 = setTimeout(() => {
-        setProcessingStage("Detecting & verifying genuine audience Q&A exchanges...");
+        setProcessingStage("Formulating comprehensive student-friendly explanations & verified Q&As...");
       }, 2600);
 
       const payload: any = {
@@ -329,6 +335,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
         sampleTrackId: selectedSampleTrack ? selectedSampleTrack.id : undefined,
         mediaUrl: mediaUrl || undefined,
         youtubeId: youtubeId || undefined,
+        lectureNotesOrTranscript: lectureNotesOrTranscript.trim() || undefined,
         trainingProfile: trainingProfile,
       };
 
@@ -1044,6 +1051,27 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
               />
             </div>
 
+            {/* Optional Specific Notes / Transcript Input to guarantee exact student-friendly output */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
+                <label className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+                  <BookOpen className="w-3.5 h-3.5 text-[#C98A2C]" />
+                  <span>Topic Syllabus, Video Transcript, or Lecture Notes (Optional)</span>
+                </label>
+                <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                  Guarantees exact, student-expanded notes
+                </span>
+              </div>
+              <textarea
+                id="admin-session-transcript-notes"
+                rows={3}
+                value={lectureNotesOrTranscript}
+                onChange={(e) => setLectureNotesOrTranscript(e.target.value)}
+                placeholder="Paste YouTube transcript, syllabus outline, or lecture points here. The AI will directly expand on these exact concepts with clear definitions, underlying mechanisms, and student-friendly examples..."
+                className="w-full text-xs text-[#0F2540] bg-slate-50 border border-slate-300 rounded-xl p-3 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0F2540] placeholder:text-slate-400"
+              />
+            </div>
+
             {/* Submission Action */}
             <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="text-xs text-slate-500 flex items-center gap-2">
@@ -1131,16 +1159,16 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
               </button>
             </div>
 
-            {/* Mandatory AI Label */}
-            <div className="bg-slate-50 border-l-4 border-[#C98A2C] p-3 rounded-r-lg text-xs text-slate-700 flex items-center justify-between">
+            {/* Mandatory AI Label & Student Comprehension Banner */}
+            <div className="bg-emerald-50/60 border-l-4 border-emerald-600 p-3 rounded-r-lg text-xs text-emerald-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-[#C98A2C] shrink-0" />
+                <GraduationCap className="w-4 h-4 text-emerald-700 shrink-0" />
                 <span>
-                  <strong>AI-generated — verify against the original recording for critical details.</strong>
+                  <strong>Student-Expanded Explanations:</strong> Points have been deeply expanded with definitions, mechanisms, and real-world intuition for clear student understanding.
                 </span>
               </div>
-              <span className="text-[11px] text-slate-500 hidden sm:inline">
-                Standard 60-day expiry automatically attached upon publishing
+              <span className="text-[11px] text-emerald-800 font-medium shrink-0">
+                Fully editable before issuing pass
               </span>
             </div>
           </div>

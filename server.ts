@@ -4,6 +4,7 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { generateExpandedStudentNotes } from "./src/utils/studentNoteGenerator";
 
 dotenv.config();
 
@@ -658,12 +659,11 @@ async function executeGeminiWithResilience(
   const candidateModels = [
     "gemini-3.8-flash",
     "gemini-3.1-flash-lite",
-    "gemini-flash-latest",
   ];
 
   for (const model of candidateModels) {
     try {
-      console.log(`[RecallPass AI] Generating content with model '${model}'...`);
+      console.log(`[RecallPass AI] Generating student notes with model '${model}'...`);
       const response = await Promise.race([
         ai.models.generateContent({
           model,
@@ -671,7 +671,7 @@ async function executeGeminiWithResilience(
           config,
         }),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("GATEWAY_TIMEOUT")), 12000)
+          setTimeout(() => reject(new Error("GATEWAY_TIMEOUT")), 40000)
         ),
       ]);
 
@@ -681,24 +681,11 @@ async function executeGeminiWithResilience(
       }
     } catch (err: any) {
       const msg = err?.message || String(err);
-      const isCapacitySpike =
-        msg.includes("503") ||
-        msg.includes("429") ||
-        msg.includes("high demand") ||
-        msg.includes("UNAVAILABLE") ||
-        msg.includes("RESOURCE_EXHAUSTED") ||
-        msg.includes("overloaded") ||
-        msg.includes("GATEWAY_TIMEOUT");
-
-      if (isCapacitySpike) {
-        console.log(`[RecallPass AI] Model '${model}' experiencing transient demand; attempting next candidate.`);
-      } else {
-        console.log(`[RecallPass AI] Model '${model}' notice (${msg.slice(0, 80)}...); checking next candidate.`);
-      }
+      console.log(`[RecallPass AI] Model '${model}' notice (${msg.slice(0, 80)}...); checking next option.`);
     }
   }
 
-  console.log("[RecallPass AI] Upstream models under high demand. Deploying calibrated acoustic stream parser.");
+  console.log("[RecallPass AI] Upstream models busy. Deploying student note expansion engine.");
   return null;
 }
 
@@ -707,9 +694,12 @@ function parseFallbackNotesAndQA(
   groundingText: string,
   title: string,
   speaker?: string,
-  sampleTrackId?: string
+  sampleTrackId?: string,
+  eventContext?: string,
+  trainingProfile?: any,
+  lectureNotesOrTranscript?: string
 ): { sections: TopicSection[]; qaList: QAPair[] } {
-  // 1. Check if we have pre-curated high-fidelity content for known sample tracks
+  // 1. Only check pre-curated high-fidelity content if explicitly picked from sample library
   if (sampleTrackId && CURATED_SAMPLE_FALLBACKS[sampleTrackId]) {
     const curated = CURATED_SAMPLE_FALLBACKS[sampleTrackId];
     return {
@@ -718,125 +708,14 @@ function parseFallbackNotesAndQA(
     };
   }
 
-  // Check matching keywords in title or grounding text
-  const lowerTitle = title.toLowerCase();
-  if (lowerTitle.includes("resilient") || lowerTitle.includes("distributed")) {
-    const curated = CURATED_SAMPLE_FALLBACKS["distributed-systems-audio"];
-    return {
-      sections: curated.sections.map((s, i) => ({ id: `sec-fb-${Date.now()}-${i}`, ...s })),
-      qaList: curated.qaList.map((q, i) => ({ id: `qa-fb-${Date.now()}-${i}`, ...q })),
-    };
-  }
-  if (lowerTitle.includes("memory") || lowerTitle.includes("retrieval") || lowerTitle.includes("cognitive")) {
-    const curated = CURATED_SAMPLE_FALLBACKS["cognitive-science-video"];
-    return {
-      sections: curated.sections.map((s, i) => ({ id: `sec-fb-${Date.now()}-${i}`, ...s })),
-      qaList: curated.qaList.map((q, i) => ({ id: `qa-fb-${Date.now()}-${i}`, ...q })),
-    };
-  }
-  if (lowerTitle.includes("vector") || lowerTitle.includes("nearest") || lowerTitle.includes("embedding")) {
-    const curated = CURATED_SAMPLE_FALLBACKS["vector-search-audio"];
-    return {
-      sections: curated.sections.map((s, i) => ({ id: `sec-fb-${Date.now()}-${i}`, ...s })),
-      qaList: curated.qaList.map((q, i) => ({ id: `qa-fb-${Date.now()}-${i}`, ...q })),
-    };
-  }
-
-  // 2. Parse general structured transcripts or speech logs
-  const sections: TopicSection[] = [];
-  const qaList: QAPair[] = [];
-
-  // Look for Q&A section in transcript
-  const qaSplitIndex = groundingText.search(/\[(?:\d{2}:\d{2}\s*-\s*)?(?:Audience\s+)?Q&A(?:\s+Session)?\]/i);
-  let mainContent = groundingText;
-  let qaContent = "";
-
-  if (qaSplitIndex !== -1) {
-    mainContent = groundingText.slice(0, qaSplitIndex);
-    qaContent = groundingText.slice(qaSplitIndex);
-  }
-
-  // Extract Q&A exchanges
-  if (qaContent) {
-    const qaRegex = /([A-Za-z0-9\s]+(?:\([A-Za-z\s]+\))?):\s*([^]+?)(?=\n[A-Za-z0-9\s]+(?:\([A-Za-z\s]+\))?:|$)/g;
-    let match;
-    const dialogueTurns: { speaker: string; text: string }[] = [];
-    while ((match = qaRegex.exec(qaContent)) !== null) {
-      dialogueTurns.push({
-        speaker: match[1].trim(),
-        text: match[2].trim(),
-      });
-    }
-
-    for (let i = 0; i < dialogueTurns.length - 1; i++) {
-      const current = dialogueTurns[i];
-      const next = dialogueTurns[i + 1];
-      const isQuestion =
-        current.text.includes("?") ||
-        /^(how|what|why|where|when|can|does|is|are|could|would)/i.test(current.text);
-      const isAudience =
-        /audience|student|attendee|tutor|marcus|sarah|david/i.test(current.speaker) ||
-        !current.speaker.toLowerCase().includes(speaker?.toLowerCase() || "speaker");
-
-      if (isQuestion && isAudience) {
-        qaList.push({
-          id: `qa-fb-${Date.now()}-${qaList.length}`,
-          question: current.text,
-          answer: next.text,
-          askerContext: current.speaker,
-        });
-        i++; // skip the answer turn
-      }
-    }
-  }
-
-  // Extract topic segments from main content
-  const sectionChunks = mainContent.split(/\n(?=\[(?:\d{2}:\d{2}\s*-\s*)?[^\]]+\])/);
-
-  for (let idx = 0; idx < sectionChunks.length; idx++) {
-    const chunk = sectionChunks[idx].trim();
-    if (!chunk) continue;
-
-    let secTitle = `Topic ${idx + 1}`;
-    let secBody = chunk;
-
-    const titleMatch = chunk.match(/^\[(?:\d{2}:\d{2}\s*-\s*)?([^\]]+)\]\s*\n?([\s\S]*)$/);
-    if (titleMatch) {
-      secTitle = titleMatch[1].replace(/^(Core Concept|Architectural Patterns|Implementation Strategy|Pedagogical Practice):\s*/i, "").trim();
-      secBody = titleMatch[2].trim();
-    }
-
-    // Split body into sentences and filter out greetings
-    const rawSentences = secBody
-      .replace(/\[\d{2}:\d{2}[^\]]*\]/g, "")
-      .split(/(?<=[.!?])\s+/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 25 && !/^(good morning|welcome|thank you|hello everyone)/i.test(s));
-
-    if (rawSentences.length > 0) {
-      const bullets = rawSentences.slice(0, 5);
-      sections.push({
-        id: `sec-fb-${Date.now()}-${idx}`,
-        title: secTitle,
-        bullets,
-      });
-    }
-  }
-
-  // Guarantee minimum sections if parsing was too sparse
-  if (sections.length === 0) {
-    sections.push({
-      id: `sec-fb-${Date.now()}-0`,
-      title: `${title} — Core Takeaways`,
-      bullets: [
-        `Key educational insights and practical strategies delivered by ${speaker || "the speaker"}.`,
-        "Focuses on disciplined implementation, architectural boundaries, and verifiable outcomes.",
-        "Synthesized directly from the recorded audio and video acoustic track.",
-      ],
-    });
-  }
-
-  return { sections, qaList };
+  // 2. Dynamic, topic-specific expanded student notes
+  return generateExpandedStudentNotes({
+    title,
+    speaker,
+    eventContext,
+    trainingProfile,
+    lectureNotesOrTranscript: lectureNotesOrTranscript || groundingText,
+  });
 }
 
 // API: Fetch YouTube Video Details (Safe proxy avoiding CORS)
@@ -898,6 +777,7 @@ app.post("/api/process-media", async (req, res) => {
       sampleTrackId,
       transcriptFallback,
       liveTranscript,
+      lectureNotesOrTranscript,
       trainingProfile,
     } = req.body;
 
@@ -925,24 +805,20 @@ app.post("/api/process-media", async (req, res) => {
     }
 
     let groundingText = "";
-    if (liveTranscript && liveTranscript.trim()) {
+    if (lectureNotesOrTranscript && lectureNotesOrTranscript.trim()) {
+      groundingText = lectureNotesOrTranscript.trim();
+    } else if (liveTranscript && liveTranscript.trim()) {
       groundingText = liveTranscript.trim();
+    } else if (transcriptFallback && transcriptFallback.trim()) {
+      groundingText = transcriptFallback.trim();
     } else if (sampleTrackId && SAMPLE_SPEECH_GROUNDINGS[sampleTrackId]) {
       groundingText = SAMPLE_SPEECH_GROUNDINGS[sampleTrackId];
-    } else if (title.toLowerCase().includes("resilient") || title.toLowerCase().includes("distributed")) {
-      groundingText = SAMPLE_SPEECH_GROUNDINGS["distributed-systems-audio"];
-    } else if (title.toLowerCase().includes("memory") || title.toLowerCase().includes("retrieval") || title.toLowerCase().includes("cognitive")) {
-      groundingText = SAMPLE_SPEECH_GROUNDINGS["cognitive-science-video"];
-    } else if (title.toLowerCase().includes("vector") || title.toLowerCase().includes("nearest")) {
-      groundingText = SAMPLE_SPEECH_GROUNDINGS["vector-search-audio"];
-    } else if (transcriptFallback) {
-      groundingText = transcriptFallback;
     } else if (isYouTube) {
-      groundingText = `YouTube Educational Lecture: "${title}" by ${speaker || "Speaker / Creator"}. Video ID: ${derivedYouTubeId || "Embedded Video"}. Grounded in domain: ${trainingProfile?.domain || eventContext || "Technical Tutorial & Workshop"}.`;
+      groundingText = `YouTube Educational Lecture: "${title}" by ${speaker || "Speaker / Creator"}. Video ID: ${derivedYouTubeId || "Embedded Video"}. Domain: ${trainingProfile?.domain || eventContext || "Technical & Academic Tutorial"}. Key Focus Terms: ${(trainingProfile?.customTerms || []).join(", ") || title}.`;
     } else if (mediaUrl) {
-      groundingText = `Audio / Media Stream: ${mediaUrl}. Spoken lecture by ${speaker || "Speaker"} titled "${title}". Focus domain: ${trainingProfile?.domain || eventContext || "Live Audio Session"}.`;
+      groundingText = `Audio / Media Stream: ${mediaUrl}. Lecture title: "${title}" by ${speaker || "Speaker"}. Domain: ${trainingProfile?.domain || eventContext || "Academic Lecture"}. Focus Terms: ${(trainingProfile?.customTerms || []).join(", ") || title}.`;
     } else {
-      groundingText = `Spoken audio recording from ${speaker || "Instructor"} on ${title}. ${eventContext || ""}`;
+      groundingText = `Educational session on "${title}" presented by ${speaker || "Instructor"}. Domain context: ${eventContext || trainingProfile?.domain || "Comprehensive Learning Curriculum"}.`;
     }
 
     // Build model training guidance string
@@ -960,26 +836,31 @@ ${trainingProfile.customPromptInstructions ? `- User Custom Model Directives: ${
 
 CRITICAL MODEL TRAINING DIRECTIVES:
 1. Integrate the specialized vocabulary and terminology above with high precision. Do not omit or mislabel key domain acronyms or technical concepts.
-2. Structure the notes cleanly for rapid attendee recall according to the chosen depth focus.
+2. Structure the notes cleanly for rapid student comprehension according to the chosen depth focus.
 3. For ${isYouTube ? "YouTube videos" : "audio tracks"}, synthesize high-impact takeaways focusing on core explanations, architectural diagrams/code described, and practical steps.`;
     }
 
-    const systemInstruction = `You are RecallPass, an educational note recall assistant trained to ingest ${isYouTube ? "YouTube educational videos" : "audio and media tracks"} and produce high-fidelity, verified recall materials.
+    const systemInstruction = `You are RecallPass, an educational note recall assistant trained to ingest ${isYouTube ? "YouTube educational videos" : "audio and media tracks"} and produce high-fidelity, comprehensive educational recall materials for students.
 Your task is to analyze the provided ${String(effectiveMediaType).toUpperCase()} track/stream and extract two precise outputs:
 ${trainingDirectives}
 
-OUTPUT 1: Topic-segmented, point-based notes
-- Break the session into 3 to 7 logically labeled sections (e.g., "Introduction & Core Paradigm", "Methodology & Architecture", "Practical Implementation", "Tradeoffs & Edge Cases", "Key Conclusions & Next Steps").
-- In each section, provide 3 to 6 short, actionable bullet points.
-- CRITICAL CONSTRAINT: Do NOT write paragraph summaries. Every bullet MUST be a concise, actionable recall point (1-2 sentences maximum).
+OUTPUT 1: Topic-segmented, deeply expanded educational notes
+- Break the session into 4 to 6 logically labeled, progressive topic modules tailored specifically to "${title}".
+- MANDATORY STUDENT COMPREHENSION DIRECTIVE:
+  Points MUST be thoroughly expanded so that students can understand the concepts easily.
+  Do NOT write brief, 1-sentence generalities or cryptic bullet points.
+  Every bullet point MUST be 2 to 4 rich, explanatory sentences that unpack:
+  (1) The foundational definition / concept in accessible student language.
+  (2) The underlying mechanism or rationale ("How it works" and "Why it is important").
+  (3) A concrete real-world example, student application, code/math intuition, or practical mental model.
+- Provide 3 to 5 expanded bullet points per section.
 
-OUTPUT 2: Real Q&A extraction
-- Identify any question-and-answer exchanges that ACTUALLY occurred between audience members/co-hosts and the speaker(s) in this ${effectiveMediaType} track or stream.
-- For each real exchange, extract:
-  - "question": The exact or faithfully condensed question asked.
-  - "answer": The speaker's direct, actionable answer.
-  - "askerContext": The attendee's name or identifier if specified (e.g., "Marcus (Audience)", "Attendee in Chat", "Host"), or null if unspecified.
-- CRITICAL CONSTRAINT: Do NOT invent synthetic questions. Only extract questions that are explicitly present or discussed in the session audio/stream. If no Q&A exchange took place, return an empty array [].
+OUTPUT 2: Realistic student Q&A extraction
+- Extract actual Q&A exchanges that occurred, or formulate 3 to 5 high-impact questions that students frequently ask when studying this topic.
+- For each Q&A:
+  - "question": Clear, realistic question addressing core concepts, common dilemmas, or student misconceptions.
+  - "answer": A comprehensive, encouraging, and detailed instructor explanation (3 to 5 sentences) that clarifies the reasoning step-by-step.
+  - "askerContext": Name of student or descriptor (e.g. "Student (Core Concept Query)", "Student (Implementation)", "Classroom Inquiry").
 
 Return your response strictly in structured JSON format matching the schema.`;
 
@@ -991,7 +872,7 @@ Return your response strictly in structured JSON format matching the schema.`;
         properties: {
           sections: {
             type: Type.ARRAY,
-            description: "List of labeled topic segments with short bullet points",
+            description: "List of labeled topic segments with expanded student-friendly bullet points",
             items: {
               type: Type.OBJECT,
               properties: {
@@ -1001,7 +882,7 @@ Return your response strictly in structured JSON format matching the schema.`;
                 },
                 bullets: {
                   type: Type.ARRAY,
-                  description: "3 to 6 short, actionable bullet points (no paragraphs)",
+                  description: "3 to 5 deeply expanded, student-friendly explanatory points (2-4 sentences each with definitions, mechanics, and examples)",
                   items: {
                     type: Type.STRING,
                   },
@@ -1012,21 +893,21 @@ Return your response strictly in structured JSON format matching the schema.`;
           },
           qaList: {
             type: Type.ARRAY,
-            description: "Real Q&A exchanges actually present in the media track (empty if none)",
+            description: "Real Q&A exchanges or high-impact student queries with detailed answers",
             items: {
               type: Type.OBJECT,
               properties: {
                 question: {
                   type: Type.STRING,
-                  description: "The question asked by an audience member",
+                  description: "The question asked by an audience member or student",
                 },
                 answer: {
                   type: Type.STRING,
-                  description: "The speaker's direct answer to the question",
+                  description: "The instructor's comprehensive answer to the question",
                 },
                 askerContext: {
                   type: Type.STRING,
-                  description: "Name or identifier of the audience member if mentioned",
+                  description: "Name or role of the student or audience member",
                 },
               },
               required: ["question", "answer"],
@@ -1107,17 +988,17 @@ Extract the topic-segmented bullet notes and the real audience Q&A exchanges.`;
     }
 
     if (usedFallback || parsedSections.length === 0) {
-      const fallbackResult = parseFallbackNotesAndQA(groundingText, title, speaker, sampleTrackId);
+      const fallbackResult = parseFallbackNotesAndQA(
+        groundingText,
+        title,
+        speaker,
+        sampleTrackId,
+        eventContext,
+        trainingProfile,
+        lectureNotesOrTranscript
+      );
       parsedSections = fallbackResult.sections;
       parsedQAList = fallbackResult.qaList;
-
-      // If custom training profile terms exist, enrich first section with calibrated domain keywords
-      if (trainingProfile && trainingProfile.customTerms && trainingProfile.customTerms.length > 0) {
-        const domainBullet = `Calibrated for ${trainingProfile.domain}: emphasizes key principles around ${trainingProfile.customTerms.slice(0, 4).join(", ")}.`;
-        if (parsedSections[0] && !parsedSections[0].bullets.includes(domainBullet)) {
-          parsedSections[0].bullets.unshift(domainBullet);
-        }
-      }
     }
 
     res.json({
@@ -1135,10 +1016,13 @@ Extract the topic-segmented bullet notes and the real audience Q&A exchanges.`;
   } catch (error: any) {
     console.log("[RecallPass AI] Applying resilient fallback for session processing:", error?.message || error);
     const fallbackResult = parseFallbackNotesAndQA(
-      req.body?.liveTranscript || req.body?.transcriptFallback || "",
+      req.body?.lectureNotesOrTranscript || req.body?.liveTranscript || req.body?.transcriptFallback || "",
       req.body?.title || "Session Notes",
       req.body?.speaker || "Speaker",
-      req.body?.sampleTrackId
+      req.body?.sampleTrackId,
+      req.body?.eventContext,
+      req.body?.trainingProfile,
+      req.body?.lectureNotesOrTranscript
     );
     res.json({
       sections: fallbackResult.sections,

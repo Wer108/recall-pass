@@ -32,6 +32,7 @@ export interface YouTubeMetadata {
   authorUrl?: string;
   thumbnailUrl: string;
   duration?: string;
+  description?: string;
 }
 
 export async function fetchYouTubeInfo(urlOrId: string): Promise<YouTubeMetadata | null> {

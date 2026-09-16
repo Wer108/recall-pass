@@ -10,6 +10,12 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+// Guarantee JSON header for all /api endpoints
+app.use("/api", (_req, res, next) => {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  next();
+});
+
 app.use(express.json({ limit: "50mb" }));
 
 // Lazy Gemini SDK client initialization
@@ -1359,6 +1365,20 @@ app.delete("/api/sessions/:code", (req, res) => {
 
   saveSessions(memorySessions);
   res.json({ success: true, message: `Session ${codeParam} deleted.` });
+});
+
+// Fallback 404 for unmatched /api routes so they return JSON instead of HTML or plain text
+app.all("/api/*", (_req, res) => {
+  res.status(404).json({ error: "API endpoint not found." });
+});
+
+// Global JSON error handler for all /api endpoints
+app.use("/api", (err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.log("[RecallPass API] Handled API error:", err?.message || err);
+  const status = typeof err?.status === "number" ? err.status : 500;
+  res.status(status).json({
+    error: err?.message || "Internal server error",
+  });
 });
 
 // Mount Vite middleware for dev or static serving in production

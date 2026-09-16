@@ -205,13 +205,32 @@ function generateCode(existingCodes: Set<string>): string {
   return code;
 }
 
-// Check if response is real JSON (and not HTML from static 404 on GitHub Pages)
+// Safely parse JSON from a response, handling non-JSON (text/plain, text/html) or empty responses gracefully
 async function tryParseJson(res: Response): Promise<any> {
-  const contentType = res.headers.get("content-type") || "";
-  if (!contentType.includes("application/json")) {
-    throw new Error(`Expected JSON but received '${contentType}'`);
+  let rawText = "";
+  try {
+    rawText = await res.text();
+  } catch (readErr: any) {
+    throw new Error(`Failed to read response: ${readErr?.message || "Connection error"}`);
   }
-  return await res.json();
+
+  if (!rawText || rawText.trim() === "") {
+    if (res.ok) return {};
+    throw new Error(`Server returned status ${res.status} (${res.statusText || "Empty response"})`);
+  }
+
+  // Attempt JSON parsing directly regardless of headers (many proxies or misconfigured headers still return valid JSON strings)
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    // If not valid JSON:
+    const cleanSnippet = rawText.replace(/<[^>]*>?/gm, " ").replace(/\s+/g, " ").trim().slice(0, 240);
+    if (!res.ok) {
+      throw new Error(cleanSnippet || `Server error (${res.status} ${res.statusText || "Request failed"})`);
+    }
+    // If res.ok was true but body was plain text
+    return { text: rawText, message: cleanSnippet };
+  }
 }
 
 export const sessionStore = {
@@ -522,8 +541,13 @@ export const sessionStore = {
         } catch {}
         return session;
       } else {
-        const err = await tryParseJson(res);
-        throw new Error(err.error || "Failed to set up admin account.");
+        let errObj: any = {};
+        try {
+          errObj = await tryParseJson(res);
+        } catch (parseErr: any) {
+          throw new Error(parseErr.message || "Failed to set up admin account.");
+        }
+        throw new Error(errObj.error || errObj.message || "Failed to set up admin account.");
       }
     } catch (err: any) {
       if (err.message && !err.message.includes("fetch") && !err.message.includes("network") && !err.message.includes("Failed to fetch")) {
@@ -575,8 +599,13 @@ export const sessionStore = {
         } catch {}
         return session;
       } else {
-        const err = await tryParseJson(res);
-        throw new Error(err.error || "Invalid Admin Login ID or Password.");
+        let errObj: any = {};
+        try {
+          errObj = await tryParseJson(res);
+        } catch (parseErr: any) {
+          throw new Error(parseErr.message || "Invalid Admin Login ID or Password.");
+        }
+        throw new Error(errObj.error || errObj.message || "Invalid Admin Login ID or Password.");
       }
     } catch (err: any) {
       // If server returned explicit error, re-throw
@@ -653,9 +682,15 @@ export const sessionStore = {
           localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sess));
         }
         return data;
+      } else {
+        let errObj: any = {};
+        try {
+          errObj = await tryParseJson(res);
+        } catch (parseErr: any) {
+          throw new Error(parseErr.message || "Failed to update admin credentials.");
+        }
+        throw new Error(errObj.error || errObj.message || "Failed to update admin credentials.");
       }
-      const err = await tryParseJson(res);
-      throw new Error(err.error || "Failed to update admin credentials.");
     } catch (err: any) {
       if (err.message && !err.message.includes("fetch") && !err.message.includes("network")) {
         throw err;

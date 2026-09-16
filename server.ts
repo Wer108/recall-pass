@@ -127,11 +127,13 @@ interface StoredSession {
   expiresAt: string;
   sections: TopicSection[];
   qaList: QAPair[];
-  mediaType?: "audio" | "video";
+  mediaType?: "audio" | "video" | "youtube";
   trackName?: string;
   trackDuration?: string;
   trackSize?: string;
   mediaPreviewUrl?: string;
+  mediaUrl?: string;
+  youtubeId?: string;
   wordCount: number;
   rawTranscriptSnippet?: string;
   published: boolean;
@@ -654,7 +656,6 @@ async function executeGeminiWithResilience(
 ): Promise<string | null> {
   // Ordered by current real-time availability and responsiveness
   const candidateModels = [
-    "gemini-flash-lite-latest",
     "gemini-3.8-flash",
     "gemini-3.1-flash-lite",
     "gemini-flash-latest",
@@ -838,6 +839,47 @@ function parseFallbackNotesAndQA(
   return { sections, qaList };
 }
 
+// API: Fetch YouTube Video Details (Safe proxy avoiding CORS)
+app.get("/api/youtube-info", async (req, res) => {
+  try {
+    const { id, url } = req.query;
+    let videoId = (id as string) || "";
+    if (!videoId && url) {
+      const match = (url as string).match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/);
+      if (match) videoId = match[1];
+    }
+
+    if (!videoId || videoId.length !== 11) {
+      return res.status(400).json({ error: "Invalid YouTube Video ID or URL." });
+    }
+
+    const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+    const response = await fetch(oembedUrl);
+    if (response.ok) {
+      const data = (await response.json()) as any;
+      return res.json({
+        videoId,
+        title: data.title || `YouTube Video (${videoId})`,
+        authorName: data.author_name || "Speaker / Creator",
+        authorUrl: data.author_url,
+        thumbnailUrl: data.thumbnail_url || `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+        duration: "Full Video Session",
+      });
+    }
+
+    return res.json({
+      videoId,
+      title: `YouTube Video (${videoId})`,
+      authorName: "Featured Speaker",
+      thumbnailUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+      duration: "YouTube Stream",
+    });
+  } catch (err: any) {
+    console.log("[YouTube Info] Error fetching oEmbed:", err?.message || err);
+    res.status(500).json({ error: "Failed to fetch YouTube details" });
+  }
+});
+
 // API: Process Video / Audio Track with Gemini LLM
 app.post("/api/process-media", async (req, res) => {
   try {
@@ -851,6 +893,7 @@ app.post("/api/process-media", async (req, res) => {
       trackSize,
       mediaBase64,
       mediaUrl,
+      youtubeId,
       mimeType,
       sampleTrackId,
       transcriptFallback,
@@ -862,6 +905,23 @@ app.post("/api/process-media", async (req, res) => {
       return res.status(400).json({
         error: "Session title is required.",
       });
+    }
+
+    const isYouTube =
+      mediaType === "youtube" ||
+      Boolean(youtubeId) ||
+      Boolean(mediaUrl && /(?:youtu\.be\/|youtube\.com)/.test(mediaUrl));
+
+    const effectiveMediaType: "audio" | "video" | "youtube" = isYouTube
+      ? "youtube"
+      : mediaType === "video"
+      ? "video"
+      : "audio";
+
+    let derivedYouTubeId = youtubeId || "";
+    if (!derivedYouTubeId && mediaUrl) {
+      const ytMatch = mediaUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/);
+      if (ytMatch) derivedYouTubeId = ytMatch[1];
     }
 
     let groundingText = "";
@@ -877,41 +937,49 @@ app.post("/api/process-media", async (req, res) => {
       groundingText = SAMPLE_SPEECH_GROUNDINGS["vector-search-audio"];
     } else if (transcriptFallback) {
       groundingText = transcriptFallback;
+    } else if (isYouTube) {
+      groundingText = `YouTube Educational Lecture: "${title}" by ${speaker || "Speaker / Creator"}. Video ID: ${derivedYouTubeId || "Embedded Video"}. Grounded in domain: ${trainingProfile?.domain || eventContext || "Technical Tutorial & Workshop"}.`;
     } else if (mediaUrl) {
-      groundingText = `Media stream at URL: ${mediaUrl}. Spoken talk by ${speaker || "Speaker"} titled "${title}". Focus domain: ${trainingProfile?.domain || eventContext || "Live session"}.`;
+      groundingText = `Audio / Media Stream: ${mediaUrl}. Spoken lecture by ${speaker || "Speaker"} titled "${title}". Focus domain: ${trainingProfile?.domain || eventContext || "Live Audio Session"}.`;
     } else {
-      groundingText = `Spoken session audio from ${speaker || "Instructor"} on ${title}. ${eventContext || ""}`;
+      groundingText = `Spoken audio recording from ${speaker || "Instructor"} on ${title}. ${eventContext || ""}`;
     }
 
-    // Build training guidance string
+    // Build model training guidance string
     let trainingDirectives = "";
     if (trainingProfile) {
       trainingDirectives = `
-CALIBRATED EVENT TRAINING DATA:
+CALIBRATED EVENT & SOURCE MODEL TRAINING DATA:
 - Domain Theme: ${trainingProfile.domain || "Specialized Tech / Academic"}
-- Specialized Vocabulary & Technical Glossary: ${(trainingProfile.customTerms || []).join(", ") || "None specified"}
-- Speaker Presentation Style: ${trainingProfile.speakerContext || "Standard"}
-- Audience Q&A Structure: ${trainingProfile.qaFormatPrompt || "Live audience inquiries"}
+- Specialized Vocabulary & Key Glossary: ${(trainingProfile.customTerms || []).join(", ") || "None specified"}
+- Speaker / Presenter Style: ${trainingProfile.speakerContext || "Standard Educational"}
+- Audience Q&A Structure: ${trainingProfile.qaFormatPrompt || "Live audience inquiries and speaker answers"}
 - Notes Depth Focus: ${trainingProfile.notesFocus || "technical"}
-CRITICAL: Integrate the specialized vocabulary and terminology above with high precision. Do not mislabel or omit key domain acronyms or technical concepts.`;
+- Source Media Focus: ${trainingProfile.sourceTypePreference || (isYouTube ? "youtube" : "audio_upload")}
+${trainingProfile.customPromptInstructions ? `- User Custom Model Directives: ${trainingProfile.customPromptInstructions}` : ""}
+
+CRITICAL MODEL TRAINING DIRECTIVES:
+1. Integrate the specialized vocabulary and terminology above with high precision. Do not omit or mislabel key domain acronyms or technical concepts.
+2. Structure the notes cleanly for rapid attendee recall according to the chosen depth focus.
+3. For ${isYouTube ? "YouTube videos" : "audio tracks"}, synthesize high-impact takeaways focusing on core explanations, architectural diagrams/code described, and practical steps.`;
     }
 
-    const systemInstruction = `You are RecallPass, an educational note recall assistant.
-Your task is to analyze the provided ${String(mediaType).toUpperCase()} track/stream of an educational lecture, workshop, or summit keynote and extract two precise, high-value outputs:
+    const systemInstruction = `You are RecallPass, an educational note recall assistant trained to ingest ${isYouTube ? "YouTube educational videos" : "audio and media tracks"} and produce high-fidelity, verified recall materials.
+Your task is to analyze the provided ${String(effectiveMediaType).toUpperCase()} track/stream and extract two precise outputs:
 ${trainingDirectives}
 
 OUTPUT 1: Topic-segmented, point-based notes
-- Break the session into 3 to 7 logically labeled sections (e.g., "Introduction & Context", "Core Architectural Concept", "Implementation Tradeoffs", "Real-World Case Study", "Closing & Takeaways").
+- Break the session into 3 to 7 logically labeled sections (e.g., "Introduction & Core Paradigm", "Methodology & Architecture", "Practical Implementation", "Tradeoffs & Edge Cases", "Key Conclusions & Next Steps").
 - In each section, provide 3 to 6 short, actionable bullet points.
 - CRITICAL CONSTRAINT: Do NOT write paragraph summaries. Every bullet MUST be a concise, actionable recall point (1-2 sentences maximum).
 
 OUTPUT 2: Real Q&A extraction
-- Identify any question-and-answer exchanges that ACTUALLY occurred between audience members and the speaker(s) in this ${mediaType} track or live speech stream.
+- Identify any question-and-answer exchanges that ACTUALLY occurred between audience members/co-hosts and the speaker(s) in this ${effectiveMediaType} track or stream.
 - For each real exchange, extract:
-  - "question": The exact or faithfully condensed question asked by the attendee.
+  - "question": The exact or faithfully condensed question asked.
   - "answer": The speaker's direct, actionable answer.
-  - "askerContext": The attendee's name or identifier if specified in the session (e.g., "Marcus (Audience)", "Attendee in Aisle 2"), or null if unspecified.
-- CRITICAL CONSTRAINT: Do NOT invent, hypothesize, or generate synthetic questions. Only extract questions that are explicitly present in the session audio/video/stream. If no audience Q&A exchange took place, return an empty array [].
+  - "askerContext": The attendee's name or identifier if specified (e.g., "Marcus (Audience)", "Attendee in Chat", "Host"), or null if unspecified.
+- CRITICAL CONSTRAINT: Do NOT invent synthetic questions. Only extract questions that are explicitly present or discussed in the session audio/stream. If no Q&A exchange took place, return an empty array [].
 
 Return your response strictly in structured JSON format matching the schema.`;
 
@@ -1057,10 +1125,11 @@ Extract the topic-segmented bullet notes and the real audience Q&A exchanges.`;
       qaList: parsedQAList,
       isFallback: usedFallback,
       trackInfo: {
-        mediaType,
+        mediaType: effectiveMediaType,
         trackName,
         trackDuration,
         mediaUrl: mediaUrl || undefined,
+        youtubeId: derivedYouTubeId || undefined,
       },
     });
   } catch (error: any) {
@@ -1199,6 +1268,8 @@ app.post("/api/sessions", (req, res) => {
       trackDuration,
       trackSize,
       mediaPreviewUrl,
+      mediaUrl,
+      youtubeId,
       customExpiresAt,
     } = req.body;
 
@@ -1226,13 +1297,15 @@ app.post("/api/sessions", (req, res) => {
       eventContext: eventContext?.trim() || undefined,
       createdAt: now.toISOString(),
       expiresAt,
-      mediaType: mediaType === "video" ? "video" : "audio",
+      mediaType: mediaType === "youtube" ? "youtube" : mediaType === "video" ? "video" : "audio",
       trackName: trackName?.trim() || undefined,
       trackDuration: trackDuration?.trim() || undefined,
       trackSize: trackSize?.trim() || undefined,
       mediaPreviewUrl: mediaPreviewUrl || undefined,
+      mediaUrl: mediaUrl?.trim() || undefined,
+      youtubeId: youtubeId?.trim() || undefined,
       wordCount,
-      rawTranscriptSnippet: `${mediaType.toUpperCase()} track: ${trackName || "session_track"} (${trackDuration || "Duration logged"})`,
+      rawTranscriptSnippet: `${String(mediaType).toUpperCase()} track: ${trackName || "session_track"} (${trackDuration || "Duration logged"})`,
       published: true,
       sections: Array.isArray(sections) ? sections : [],
       qaList: Array.isArray(qaList) ? qaList : [],

@@ -27,6 +27,7 @@ import {
   GraduationCap,
   Play,
   Layers,
+  Youtube,
 } from "lucide-react";
 import { SessionData, TopicSection, QAPair, EventTrainingProfile } from "../types";
 import { SAMPLE_MEDIA_TRACKS, MediaTrackInfo } from "../data/sampleMediaTracks";
@@ -58,10 +59,11 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
   // Navigation inside Admin: 'create' | 'review' | 'manage'
   const [activeAdminTab, setActiveAdminTab] = useState<"create" | "review" | "manage">("create");
 
-  // Track Ingestion Mode: "audio" | "video"
-  const [mediaType, setMediaType] = useState<"audio" | "video">("audio");
+  // Track Ingestion Mode: "audio" | "video" | "youtube"
+  const [mediaType, setMediaType] = useState<"audio" | "video" | "youtube">("audio");
   const [trackSource, setTrackSource] = useState<"file" | "url" | "live">("file");
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
+  const [youtubeId, setYoutubeId] = useState<string | null>(null);
 
   // Event Training & Live Studio state
   const [isTrainingModalOpen, setIsTrainingModalOpen] = useState(false);
@@ -187,24 +189,34 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
   // Handle URL ingestion
   const handleUrlLoaded = (info: {
     url: string;
-    mediaType: "audio" | "video";
+    mediaType: "audio" | "video" | "youtube";
     trackName: string;
     trackDuration: string;
     trackSize?: string;
+    youtubeId?: string;
+    suggestedTitle?: string;
+    suggestedSpeaker?: string;
+    thumbnailUrl?: string;
   }) => {
     setTrackSource("url");
     setMediaUrl(info.url);
-    setMediaPreviewUrl(info.url);
+    setMediaPreviewUrl(info.thumbnailUrl || info.url);
     setMediaType(info.mediaType);
     setTrackName(info.trackName);
     setTrackDuration(info.trackDuration);
-    setTrackSize(info.trackSize || "Remote Stream");
+    setTrackSize(info.trackSize || (info.mediaType === "youtube" ? "YouTube Video" : "Remote Stream"));
+    setYoutubeId(info.youtubeId || null);
     setSelectedSampleTrack(null);
     setUploadedFile(null);
     setFileBase64(null);
-    if (!title) {
+    if (info.suggestedTitle) {
+      setTitle(info.suggestedTitle);
+    } else if (!title) {
       const clean = info.trackName.replace(/\.[^/.]+$/, "");
       setTitle(clean);
+    }
+    if (info.suggestedSpeaker) {
+      setSpeaker(info.suggestedSpeaker);
     }
     setErrorMessage(null);
   };
@@ -273,6 +285,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     setSelectedSampleTrack(null);
     setUploadedFile(null);
     setMediaUrl(null);
+    setYoutubeId(null);
     setTrackName("");
     setTrackDuration("");
     setTrackSize("");
@@ -315,6 +328,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
         trackSize: trackSize || undefined,
         sampleTrackId: selectedSampleTrack ? selectedSampleTrack.id : undefined,
         mediaUrl: mediaUrl || undefined,
+        youtubeId: youtubeId || undefined,
         trainingProfile: trainingProfile,
       };
 
@@ -412,6 +426,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
         trackSize: trackSize || undefined,
         mediaPreviewUrl: mediaPreviewUrl || mediaUrl || undefined,
         mediaUrl: mediaUrl || undefined,
+        youtubeId: youtubeId || undefined,
         sections: reviewSections,
         qaList: reviewQAList,
         isLiveEventSession: trackSource === "live",
@@ -603,11 +618,43 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
               </div>
             </div>
 
+            {/* AI Model Calibration Banner */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-gradient-to-r from-slate-900 to-[#0F2540] text-white shadow-xs">
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-amber-400/20 border border-amber-400/30 text-amber-300 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-5 h-5 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-white">
+                      AI Model Calibrated: {trainingProfile.domain}
+                    </span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 font-semibold border border-amber-400/30">
+                      {trainingProfile.customTerms.length} Specialized Terms Active
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-300 mt-0.5">
+                    Optimized to extract clean, actionable notes from YouTube videos and audio tracks without hallucinations.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                id="btn-train-event-ai-banner"
+                onClick={() => setIsTrainingModalOpen(true)}
+                className="px-4 py-2 text-xs font-bold rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 transition-colors flex items-center gap-1.5 shrink-0 shadow-xs"
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                <span>Train / Calibrate Model</span>
+              </button>
+            </div>
+
             {/* Track Type & AI Training Bar */}
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
               {/* Track Type Tabs */}
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold text-slate-700">Track Type:</span>
+                <span className="text-xs font-semibold text-slate-700">Track Source:</span>
                 <div className="flex flex-wrap items-center gap-1 bg-white p-1 rounded-lg border border-slate-200 shadow-2xs">
                   <button
                     type="button"
@@ -626,7 +673,27 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                     }`}
                   >
                     <Music className="w-3.5 h-3.5 text-[#C98A2C]" />
-                    <span>Audio (.mp3, .wav)</span>
+                    <span>Audio Track (.mp3, .wav, .m4a)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="btn-select-youtube-mode"
+                    onClick={() => {
+                      setTrackSource("url");
+                      setMediaType("youtube");
+                      if (selectedSampleTrack) {
+                        handleClearActiveTrack();
+                      }
+                    }}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5 ${
+                      trackSource === "url" && mediaType === "youtube"
+                        ? "bg-rose-600 text-white shadow-2xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    <Youtube className="w-3.5 h-3.5 text-rose-500" />
+                    <span>YouTube Video URL</span>
                   </button>
 
                   <button
@@ -646,7 +713,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                     }`}
                   >
                     <Video className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>Video (.mp4, .webm)</span>
+                    <span>Video File (.mp4, .webm)</span>
                   </button>
 
                   <button
@@ -654,18 +721,19 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                     id="btn-select-url-mode"
                     onClick={() => {
                       setTrackSource("url");
+                      setMediaType("audio");
                       if (selectedSampleTrack) {
                         handleClearActiveTrack();
                       }
                     }}
                     className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5 ${
-                      trackSource === "url"
+                      trackSource === "url" && mediaType === "audio"
                         ? "bg-[#0F2540] text-white shadow-2xs"
                         : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
                     <LinkIcon className="w-3.5 h-3.5 text-sky-500" />
-                    <span>Upload URL</span>
+                    <span>Audio Stream / Web Link</span>
                   </button>
 
                   <button
@@ -681,7 +749,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                     }`}
                   >
                     <Radio className="w-3.5 h-3.5 text-rose-500 animate-pulse" />
-                    <span>Live Event</span>
+                    <span>Live Event Mic</span>
                   </button>
                 </div>
               </div>
@@ -693,12 +761,12 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                   id="btn-train-event-ai"
                   onClick={() => setIsTrainingModalOpen(true)}
                   className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 shadow-2xs transition-all flex items-center gap-1.5 group"
-                  title="Configure domain vocabulary, speaker context, and notes focus for live events"
+                  title="Configure domain vocabulary, speaker context, and notes focus for YouTube and audio tracks"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-[#C98A2C] group-hover:rotate-12 transition-transform" />
-                  <span>Train Event AI</span>
+                  <span>Configure Training</span>
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-50 text-amber-900 border border-amber-200">
-                    {trainingProfile.domain.length > 16 ? trainingProfile.domain.slice(0, 16) + "…" : trainingProfile.domain} ({trainingProfile.customTerms.length} terms)
+                    {trainingProfile.domain.length > 16 ? trainingProfile.domain.slice(0, 16) + "…" : trainingProfile.domain}
                   </span>
                 </button>
 
@@ -735,10 +803,11 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 <div className="space-y-3">
                   <TrackPlayer
                     mediaType={mediaType}
-                    trackName={trackName || "url_media_stream"}
+                    trackName={trackName || (mediaType === "youtube" ? "YouTube Video" : "url_media_stream")}
                     trackDuration={trackDuration || "Remote Stream"}
-                    trackSize={trackSize || "URL Stream"}
+                    trackSize={trackSize || (mediaType === "youtube" ? "YouTube Video" : "URL Stream")}
                     mediaUrl={mediaUrl}
+                    youtubeId={youtubeId || undefined}
                     onReplaceTrack={handleClearActiveTrack}
                   />
                   <div className="flex justify-end">
@@ -846,6 +915,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                   trackDuration={trackDuration || "30:00"}
                   trackSize={trackSize}
                   mediaUrl={mediaPreviewUrl || undefined}
+                  youtubeId={youtubeId || undefined}
                   onReplaceTrack={handleClearActiveTrack}
                 />
               ) : (
@@ -997,7 +1067,9 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 text-[#C98A2C]" />
-                    <span>Extract Notes from {mediaType === "video" ? "Video" : "Audio"} Track</span>
+                    <span>
+                      Extract Notes from {mediaType === "youtube" ? "YouTube Video" : mediaType === "video" ? "Video" : "Audio"} Track
+                    </span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}

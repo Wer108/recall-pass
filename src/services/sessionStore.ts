@@ -307,12 +307,13 @@ export const sessionStore = {
     title: string;
     speaker?: string;
     eventContext?: string;
-    mediaType?: "audio" | "video";
+    mediaType?: "audio" | "video" | "url" | "youtube";
     trackName?: string;
     trackDuration?: string;
     trackSize?: string;
     mediaPreviewUrl?: string;
     mediaUrl?: string;
+    youtubeId?: string;
     isLiveEventSession?: boolean;
     sections: TopicSection[];
     qaList: QAPair[];
@@ -354,6 +355,7 @@ export const sessionStore = {
       trackSize: payload.trackSize,
       mediaPreviewUrl: payload.mediaPreviewUrl || payload.mediaUrl,
       mediaUrl: payload.mediaUrl || payload.mediaPreviewUrl,
+      youtubeId: payload.youtubeId,
       isLiveEventSession: payload.isLiveEventSession,
       createdAt: now.toISOString(),
       expiresAt,
@@ -451,51 +453,70 @@ export const sessionStore = {
       return parseClientTranscript(transcript, payload.title || sample.title, payload.speaker || sample.speaker);
     }
 
-    // Generic fallback for user-uploaded audio/video file on static hosts
+    // Generic fallback for user-uploaded audio/video/YouTube on static hosts
+    const isYouTube =
+      payload.mediaType === "youtube" ||
+      Boolean(payload.youtubeId) ||
+      (payload.mediaUrl && /(?:youtu\.be\/|youtube\.com)/.test(payload.mediaUrl));
+
+    const training = payload.trainingProfile;
+    const domainTermBullets =
+      training?.customTerms && training.customTerms.length > 0
+        ? [
+            `Trained domain focus on ${training.domain || "Applied Knowledge"}: emphasizes critical workflows around ${training.customTerms.slice(0, 4).join(", ")}.`,
+            `Specialized glossary: ${training.customTerms.slice(0, 8).join(" • ")}.`,
+          ]
+        : [];
+
     return {
       sections: [
         {
           id: `sec-${Date.now()}-1`,
-          title: "Session Overview & Core Objectives",
+          title: isYouTube ? "Video Overview & Core Thesis" : "Session Overview & Core Objectives",
           bullets: [
-            `Keynote presentation and practical principles delivered by ${payload.speaker || "the speaker"}.`,
-            "Acoustic track ingested and segmented into actionable takeaways.",
-            "Designed for durable knowledge retention and rapid post-session review.",
+            `${isYouTube ? "YouTube video track" : "Acoustic audio track"} ingested from ${payload.speaker || "Featured Speaker"}: "${payload.title || "Session"}".`,
+            ...domainTermBullets,
+            "Key principles segmented into concise, actionable recall takeaways.",
+            "Designed for immediate retention, revision, and permanent reference.",
           ],
         },
         {
           id: `sec-${Date.now()}-2`,
-          title: "Key Frameworks & Methodologies",
+          title: "Key Frameworks & Core Implementations",
           bullets: [
-            "Fundamental paradigms established during the presentation.",
-            "Emphasis on verifiable architectural patterns and resilient implementation.",
-            "Concrete guidance on measuring user-facing outcomes under real-world conditions.",
+            "Primary paradigms and architectural considerations presented in the material.",
+            "Emphasis on verifiable patterns, failure modes, and implementation tradeoffs.",
+            "Practical methodology and systematic problem-solving steps demonstrated.",
           ],
         },
         {
           id: `sec-${Date.now()}-3`,
-          title: "Execution Guidelines & Recommendations",
+          title: "Execution Guidelines & Summary",
           bullets: [
-            "Actionable steps for engineering teams and session participants.",
-            "Prioritize bounded resource usage and fast-failing defensive checks.",
-            "Reference the original recording track for deeper contextual inquiries.",
+            "Actionable recommendations for practical application and project integration.",
+            "High-impact summary points for rapid review prior to practical exams or deployment.",
+            "Reference the original stream/recording for in-depth nuances and extended discussions.",
           ],
         },
       ],
       qaList: [
         {
           id: `qa-${Date.now()}-1`,
-          question: "How can attendees best apply these principles immediately?",
+          question: isYouTube
+            ? "What was the most critical takeaway emphasized by the presenter?"
+            : "How should attendees best apply these principles immediately?",
           answer:
-            "Start by identifying the highest-risk failure mode in your current architecture, isolate it with dedicated circuit breakers, and run safe verification drills in a test environment.",
-          askerContext: "Audience Member",
+            "Focus on the primary architectural constraints first, validate assumptions with small repeatable tests, and measure real-world performance against concrete thresholds.",
+          askerContext: isYouTube ? "Video Discussion" : "Audience Member",
         },
       ],
       isFallback: true,
       trackInfo: {
-        mediaType: payload.mediaType || "audio",
+        mediaType: isYouTube ? "youtube" : payload.mediaType || "audio",
         trackName: payload.trackName || "session_track",
         trackDuration: payload.trackDuration || "Recorded Session",
+        mediaUrl: payload.mediaUrl || undefined,
+        youtubeId: payload.youtubeId || undefined,
       },
     };
   },

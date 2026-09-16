@@ -13,6 +13,9 @@ import {
   RefreshCw,
   Music,
   Video,
+  Youtube,
+  Play,
+  Volume2,
 } from "lucide-react";
 import { SessionData } from "../types";
 import { NotesSection } from "./NotesSection";
@@ -36,6 +39,7 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<"all" | "notes" | "qa">("all");
   const [copiedAll, setCopiedAll] = useState(false);
+  const [showSourceMedia, setShowSourceMedia] = useState(false);
 
   const fetchSession = async (codeToFetch: string) => {
     const cleanCode = codeToFetch.trim().toUpperCase();
@@ -259,17 +263,25 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
                       {session.mediaType && (
                         <span
                           className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${
-                            session.mediaType === "video"
+                            session.mediaType === "youtube" || session.youtubeId
+                              ? "bg-rose-50 text-rose-700 border border-rose-200"
+                              : session.mediaType === "video"
                               ? "bg-indigo-50 text-indigo-700 border border-indigo-200"
                               : "bg-amber-50 text-[#C98A2C] border border-amber-200"
                           }`}
                         >
-                          {session.mediaType === "video" ? (
+                          {session.mediaType === "youtube" || session.youtubeId ? (
+                            <Youtube className="w-3 h-3 text-rose-600" />
+                          ) : session.mediaType === "video" ? (
                             <Video className="w-3 h-3" />
                           ) : (
                             <Music className="w-3 h-3" />
                           )}
-                          <span className="capitalize">{session.mediaType} Track</span>
+                          <span>
+                            {session.mediaType === "youtube" || session.youtubeId
+                              ? "YouTube Video Source"
+                              : `${session.mediaType} Track`}
+                          </span>
                           {session.trackDuration && (
                             <span className="text-[10px] font-mono">({session.trackDuration})</span>
                           )}
@@ -341,19 +353,71 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
                   </div>
                 </div>
 
-                {/* Mandatory AI Transparency Disclaimer */}
-                <div
-                  id="ai-disclaimer-badge"
-                  className="bg-slate-50 border-l-4 border-[#C98A2C] rounded-r-lg p-3 text-xs text-slate-600 flex items-start gap-2.5"
-                >
-                  <Sparkles className="w-4 h-4 text-[#C98A2C] shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-semibold text-slate-900">
-                      AI-generated — verify against the original recording for critical details.
-                    </span>{" "}
-                    Extracted directly from the spoken session audio transcript.
+                {/* Mandatory AI Transparency Disclaimer & Media Player Toggle */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 border-l-4 border-[#C98A2C] rounded-r-lg p-3 text-xs text-slate-600">
+                  <div className="flex items-start gap-2.5">
+                    <Sparkles className="w-4 h-4 text-[#C98A2C] shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-semibold text-slate-900">
+                        AI-generated — verify against the original recording for critical details.
+                      </span>{" "}
+                      Extracted from the ingested {session.mediaType === "youtube" ? "YouTube video" : "audio/video track"}.
+                    </div>
                   </div>
+
+                  {(session.youtubeId || session.mediaUrl) && (
+                    <button
+                      type="button"
+                      id="btn-toggle-attendee-source-media"
+                      onClick={() => setShowSourceMedia(!showSourceMedia)}
+                      className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-semibold transition-colors flex items-center gap-1.5 shrink-0 shadow-2xs"
+                    >
+                      {session.youtubeId ? (
+                        <Youtube className="w-3.5 h-3.5 text-rose-600" />
+                      ) : (
+                        <Volume2 className="w-3.5 h-3.5 text-amber-600" />
+                      )}
+                      <span>
+                        {showSourceMedia ? "Hide Source Media" : `Play Source ${session.youtubeId ? "Video" : "Audio"}`}
+                      </span>
+                    </button>
+                  )}
                 </div>
+
+                {/* Collapsible Source Media Player */}
+                {showSourceMedia && (
+                  <div className="p-4 rounded-xl bg-slate-900 text-white space-y-3 animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {session.youtubeId ? (
+                          <Youtube className="w-4 h-4 text-rose-500" />
+                        ) : (
+                          <Music className="w-4 h-4 text-amber-400" />
+                        )}
+                        <span className="text-xs font-bold">
+                          Original {session.youtubeId ? "YouTube Lecture Feed" : "Audio Recording"}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        {session.trackDuration || "Full Track"}
+                      </span>
+                    </div>
+
+                    {session.youtubeId ? (
+                      <div className="relative aspect-video rounded-lg overflow-hidden border border-slate-800">
+                        <iframe
+                          src={`https://www.youtube-nocookie.com/embed/${session.youtubeId}?rel=0&modestbranding=1`}
+                          title={session.title}
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                          allowFullScreen
+                          className="w-full h-full border-0"
+                        />
+                      </div>
+                    ) : session.mediaUrl ? (
+                      <audio src={session.mediaUrl} controls className="w-full" />
+                    ) : null}
+                  </div>
+                )}
 
                 {/* Filter and In-Session Search Controls */}
                 <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">

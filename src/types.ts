@@ -22,12 +22,13 @@ export interface SessionData {
   isExpired?: boolean;
   sections: TopicSection[];
   qaList: QAPair[];
-  mediaType?: "audio" | "video" | "url";
+  mediaType?: "audio" | "video" | "url" | "youtube";
   trackName?: string;
   trackDuration?: string;
   trackSize?: string;
   mediaPreviewUrl?: string;
   mediaUrl?: string;
+  youtubeId?: string;
   wordCount?: number;
   rawTranscriptSnippet?: string;
   published: boolean;
@@ -40,7 +41,9 @@ export interface EventTrainingProfile {
   speakerContext: string;
   qaFormatPrompt: string;
   targetCadence: "realtime" | "interval" | "ondemand";
-  notesFocus: "technical" | "general" | "executive";
+  notesFocus: "technical" | "general" | "executive" | "study_guide";
+  sourceTypePreference?: "youtube" | "audio_upload" | "podcast_stream" | "all_media";
+  customPromptInstructions?: string;
   isLiveTrained: boolean;
 }
 
@@ -48,12 +51,13 @@ export interface ProcessMediaRequest {
   title: string;
   speaker?: string;
   eventContext?: string;
-  mediaType: "audio" | "video" | "url";
+  mediaType: "audio" | "video" | "url" | "youtube";
   trackName: string;
   trackDuration?: string;
   trackSize?: string;
   mediaBase64?: string;
   mediaUrl?: string;
+  youtubeId?: string;
   mimeType?: string;
   sampleTrackId?: string;
   transcriptFallback?: string;
@@ -72,10 +76,11 @@ export interface ProcessMediaResponse {
     askerContext?: string;
   }>;
   trackInfo?: {
-    mediaType: "audio" | "video" | "url";
+    mediaType: "audio" | "video" | "url" | "youtube";
     trackName: string;
     trackDuration?: string;
     mediaUrl?: string;
+    youtubeId?: string;
   };
   wordCount?: number;
 }

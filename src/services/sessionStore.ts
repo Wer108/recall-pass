@@ -233,6 +233,31 @@ async function tryParseJson(res: Response): Promise<any> {
   }
 }
 
+// Check if the remote server/API is unavailable (e.g. running on static hosting like Vercel CDN or GitHub Pages)
+function isServerUnavailable(res?: Response, err?: any): boolean {
+  if (res && [404, 405, 501, 502, 503, 504].includes(res.status)) {
+    return true;
+  }
+  if (err) {
+    const msg = (err.message || "").toLowerCase();
+    if (
+      msg.includes("405") ||
+      msg.includes("404") ||
+      msg.includes("empty response") ||
+      msg.includes("method not allowed") ||
+      msg.includes("not found") ||
+      msg.includes("failed to fetch") ||
+      msg.includes("network") ||
+      msg.includes("connection") ||
+      msg.includes("load failed") ||
+      msg.includes("server error (50")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export const sessionStore = {
   // Fetch all sessions (tries server first, falls back to local storage)
   async getSessions(): Promise<SessionData[]> {
@@ -531,7 +556,7 @@ export const sessionStore = {
         saveLocalAdminCreds({ loginId: cleanId, password: cleanPw });
         const session: AdminAuthSession = {
           adminId: data.adminId || cleanId,
-          token: data.token,
+          token: data.token || `rp_admin_${Date.now()}`,
           loginTime: data.loginTime || new Date().toISOString(),
           role: "admin",
         };
@@ -540,33 +565,43 @@ export const sessionStore = {
           localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
         } catch {}
         return session;
-      } else {
-        let errObj: any = {};
-        try {
-          errObj = await tryParseJson(res);
-        } catch (parseErr: any) {
-          throw new Error(parseErr.message || "Failed to set up admin account.");
-        }
-        throw new Error(errObj.error || errObj.message || "Failed to set up admin account.");
       }
-    } catch (err: any) {
-      if (err.message && !err.message.includes("fetch") && !err.message.includes("network") && !err.message.includes("Failed to fetch")) {
-        throw err;
+
+      // If server returned 404, 405 (static host like Vercel CDN), or gateway error:
+      if (isServerUnavailable(res)) {
+        return this.fallbackSetupAdmin(cleanId, cleanPw);
       }
-      // Local fallback setup
-      saveLocalAdminCreds({ loginId: cleanId, password: cleanPw });
-      const session: AdminAuthSession = {
-        adminId: cleanId,
-        token: `rp_local_${Date.now()}`,
-        loginTime: new Date().toISOString(),
-        role: "admin",
-      };
+
+      let errObj: any = {};
       try {
-        sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
-        localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
-      } catch {}
-      return session;
+        errObj = await tryParseJson(res);
+      } catch (parseErr: any) {
+        if (isServerUnavailable(undefined, parseErr)) {
+          return this.fallbackSetupAdmin(cleanId, cleanPw);
+        }
+      }
+      throw new Error(errObj.error || errObj.message || "Failed to set up admin account.");
+    } catch (err: any) {
+      if (isServerUnavailable(undefined, err)) {
+        return this.fallbackSetupAdmin(cleanId, cleanPw);
+      }
+      throw err;
     }
+  },
+
+  fallbackSetupAdmin(cleanId: string, cleanPw: string): AdminAuthSession {
+    saveLocalAdminCreds({ loginId: cleanId, password: cleanPw });
+    const session: AdminAuthSession = {
+      adminId: cleanId,
+      token: `rp_local_${Date.now()}`,
+      loginTime: new Date().toISOString(),
+      role: "admin",
+    };
+    try {
+      sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+      localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+    } catch {}
+    return session;
   },
 
   // Admin login with ID and password
@@ -589,7 +624,7 @@ export const sessionStore = {
         const data = await tryParseJson(res);
         const session: AdminAuthSession = {
           adminId: data.adminId || cleanId,
-          token: data.token,
+          token: data.token || `rp_admin_${Date.now()}`,
           loginTime: data.loginTime || new Date().toISOString(),
           role: "admin",
         };
@@ -598,45 +633,52 @@ export const sessionStore = {
           localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
         } catch {}
         return session;
-      } else {
-        let errObj: any = {};
-        try {
-          errObj = await tryParseJson(res);
-        } catch (parseErr: any) {
-          throw new Error(parseErr.message || "Invalid Admin Login ID or Password.");
+      }
+
+      if (isServerUnavailable(res)) {
+        return this.fallbackLoginAdmin(cleanId, cleanPw);
+      }
+
+      let errObj: any = {};
+      try {
+        errObj = await tryParseJson(res);
+      } catch (parseErr: any) {
+        if (isServerUnavailable(undefined, parseErr)) {
+          return this.fallbackLoginAdmin(cleanId, cleanPw);
         }
-        throw new Error(errObj.error || errObj.message || "Invalid Admin Login ID or Password.");
       }
+      throw new Error(errObj.error || errObj.message || "Invalid Admin Login ID or Password.");
     } catch (err: any) {
-      // If server returned explicit error, re-throw
-      if (err.message && !err.message.includes("fetch") && !err.message.includes("network") && !err.message.includes("Failed to fetch")) {
-        throw err;
+      if (isServerUnavailable(undefined, err)) {
+        return this.fallbackLoginAdmin(cleanId, cleanPw);
       }
-
-      // Static hosting fallback
-      const creds = getLocalAdminCreds();
-      if (!creds || !creds.loginId || !creds.password) {
-        throw new Error("No admin account configured yet. Please register your Admin Login ID and Password.");
-      }
-
-      const idMatches = cleanId.toLowerCase() === creds.loginId.toLowerCase();
-      const pwMatches = cleanPw === creds.password;
-
-      if (idMatches && pwMatches) {
-        const session: AdminAuthSession = {
-          adminId: creds.loginId,
-          token: `rp_local_${Date.now()}`,
-          loginTime: new Date().toISOString(),
-          role: "admin",
-        };
-        try {
-          sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
-          localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
-        } catch {}
-        return session;
-      }
-      throw new Error("Invalid Admin credentials. Attendees cannot access this studio. Check Login ID and Password.");
+      throw err;
     }
+  },
+
+  fallbackLoginAdmin(cleanId: string, cleanPw: string): AdminAuthSession {
+    const creds = getLocalAdminCreds();
+    if (!creds || !creds.loginId || !creds.password) {
+      throw new Error("No admin account configured yet. Please register your Admin Login ID and Password.");
+    }
+
+    const idMatches = cleanId.toLowerCase() === creds.loginId.toLowerCase();
+    const pwMatches = cleanPw === creds.password;
+
+    if (idMatches && pwMatches) {
+      const session: AdminAuthSession = {
+        adminId: creds.loginId,
+        token: `rp_local_${Date.now()}`,
+        loginTime: new Date().toISOString(),
+        role: "admin",
+      };
+      try {
+        sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+        localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+      } catch {}
+      return session;
+    }
+    throw new Error("Invalid Admin credentials. Attendees cannot access this studio. Check Login ID and Password.");
   },
 
   // Admin logout
@@ -682,39 +724,48 @@ export const sessionStore = {
           localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sess));
         }
         return data;
-      } else {
-        let errObj: any = {};
-        try {
-          errObj = await tryParseJson(res);
-        } catch (parseErr: any) {
-          throw new Error(parseErr.message || "Failed to update admin credentials.");
+      }
+
+      if (isServerUnavailable(res)) {
+        return this.fallbackChangeAdminCredentials(currentPassword, newLoginId, newPassword);
+      }
+
+      let errObj: any = {};
+      try {
+        errObj = await tryParseJson(res);
+      } catch (parseErr: any) {
+        if (isServerUnavailable(undefined, parseErr)) {
+          return this.fallbackChangeAdminCredentials(currentPassword, newLoginId, newPassword);
         }
-        throw new Error(errObj.error || errObj.message || "Failed to update admin credentials.");
       }
+      throw new Error(errObj.error || errObj.message || "Failed to update admin credentials.");
     } catch (err: any) {
-      if (err.message && !err.message.includes("fetch") && !err.message.includes("network")) {
-        throw err;
+      if (isServerUnavailable(undefined, err)) {
+        return this.fallbackChangeAdminCredentials(currentPassword, newLoginId, newPassword);
       }
-      // Local fallback
-      const creds = getLocalAdminCreds();
-      if (currentPassword.trim() !== creds.password) {
-        throw new Error("Current admin password does not match.");
-      }
-      if (newLoginId.trim().length < 3) {
-        throw new Error("New Admin ID must be at least 3 characters.");
-      }
-      if (newPassword.trim().length < 6) {
-        throw new Error("New password must be at least 6 characters long.");
-      }
-      saveLocalAdminCreds({ loginId: newLoginId.trim(), password: newPassword.trim() });
-      const sess = this.getAdminSession();
-      if (sess) {
-        sess.adminId = newLoginId.trim();
-        sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sess));
-        localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sess));
-      }
-      return { success: true, message: "Admin credentials successfully updated.", adminId: newLoginId.trim() };
+      throw err;
     }
+  },
+
+  fallbackChangeAdminCredentials(currentPassword: string, newLoginId: string, newPassword: string) {
+    const creds = getLocalAdminCreds();
+    if (currentPassword.trim() !== creds.password) {
+      throw new Error("Current admin password does not match.");
+    }
+    if (newLoginId.trim().length < 3) {
+      throw new Error("New Admin ID must be at least 3 characters.");
+    }
+    if (newPassword.trim().length < 6) {
+      throw new Error("New password must be at least 6 characters long.");
+    }
+    saveLocalAdminCreds({ loginId: newLoginId.trim(), password: newPassword.trim() });
+    const sess = this.getAdminSession();
+    if (sess) {
+      sess.adminId = newLoginId.trim();
+      sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sess));
+      localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sess));
+    }
+    return { success: true, message: "Admin credentials successfully updated.", adminId: newLoginId.trim() };
   },
 
   // Event Training Profile persistence

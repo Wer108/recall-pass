@@ -57,6 +57,7 @@ export default function App() {
     }
 
     // Default to Attendee Portal
+    setAttendeeCode("");
     setCurrentView("attendee");
   };
 
@@ -76,8 +77,19 @@ export default function App() {
     if (currentView === "admin-studio" && adminSession) fetchSessions();
   }, [currentView, adminSession]);
 
+  const clearPassRoute = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("code");
+    url.searchParams.delete("page");
+    url.searchParams.delete("view");
+    url.hash = "";
+    window.history.replaceState({}, "", url);
+    setAttendeeCode("");
+  };
+
   // Handler: Navigate to Admin
   const handleNavigateAdmin = () => {
+    clearPassRoute();
     const active = sessionStore.getAdminSession();
     if (active) {
       setAdminSession(active);
@@ -91,6 +103,7 @@ export default function App() {
 
   // Handler: Navigate to Attendee
   const handleNavigateAttendee = () => {
+    clearPassRoute();
     setCurrentView("attendee");
     window.location.hash = "attendee";
   };
@@ -137,7 +150,7 @@ export default function App() {
       {/* Main View Area */}
       <main className="flex-1">
         {currentView === "attendee" && (
-          <AttendeeView initialCode={attendeeCode} />
+          <AttendeeView key={attendeeCode || "lookup"} initialCode={attendeeCode} />
         )}
 
         {(currentView === "admin-login" || (currentView === "admin-studio" && !adminSession)) && (

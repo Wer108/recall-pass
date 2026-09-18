@@ -269,7 +269,7 @@ export const sessionStore = {
   async getSessionByCode(code: string): Promise<SessionData> {
     const enteredCode = code.trim().toUpperCase();
     if (!enteredCode) throw new Error("Please enter your pass ID.");
-    const cleanCode = /^[A-Z0-9]{6}$/.test(enteredCode) ? `RP-${enteredCode}` : enteredCode;
+    const cleanCode = /^(?:[A-Z0-9]{6}|[A-Z0-9]{10})$/.test(enteredCode) ? `RP-${enteredCode}` : enteredCode;
     let res: Response | undefined;
     let data: any;
     try {

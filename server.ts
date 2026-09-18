@@ -1,3 +1,4 @@
+import { generateAccessCode } from "./src/utils/accessCode";
 import express from "express";
 import path from "path";
 import fs from "fs";
@@ -164,21 +165,6 @@ function saveSessions(sessions: StoredSession[]) {
   } catch (err) {
     console.error("Error saving sessions file:", err);
   }
-}
-
-function generateAccessCode(existingCodes: Set<string>): string {
-  const chars = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-  let code = "";
-  let attempts = 0;
-  do {
-    let suffix = "";
-    for (let i = 0; i < 6; i++) {
-      suffix += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    code = `RP-${suffix}`;
-    attempts++;
-  } while (existingCodes.has(code) && attempts < 100);
-  return code;
 }
 
 function seedDefaultSessions(): StoredSession[] {

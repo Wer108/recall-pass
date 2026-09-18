@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Search,
   KeyRound,
@@ -17,6 +17,7 @@ import {
   Play,
   Volume2,
 } from "lucide-react";
+import { SessionQuiz } from "./SessionQuiz";
 import { SessionData } from "../types";
 import { NotesSection } from "./NotesSection";
 import { QASection } from "./QASection";
@@ -42,33 +43,43 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
   const [copiedAll, setCopiedAll] = useState(false);
   const [showSourceMedia, setShowSourceMedia] = useState(false);
 
-  const fetchSession = async (codeToFetch: string) => {
+  const requestId = useRef(0);
+
+  const fetchSession = async (codeToFetch: string, navigate = false) => {
     const cleanCode = codeToFetch.trim().toUpperCase();
     if (!cleanCode) {
       setError("Please enter the pass ID provided by your organizer.");
       return;
     }
 
+    const id = ++requestId.current;
     setLoading(true);
     setError(null);
 
     try {
       const data = await sessionStore.getSessionByCode(cleanCode);
+      if (id !== requestId.current) return;
       setSession(validateAttendeeSession(data));
       setInputCode(data.accessCode);
       setSearchQuery("");
       setActiveFilter("all");
 
-      // Sync URL hash or query without full reload
+      setShowSourceMedia(false);
+      // Dedicated details route; preserve legacy shared pass links.
       const newUrl = new URL(window.location.href);
       newUrl.searchParams.set("code", data.accessCode);
-      window.history.replaceState({}, "", newUrl.toString());
+      newUrl.searchParams.set("page", "session");
+      newUrl.hash = "";
+      if (navigate) window.history.pushState({}, "", newUrl.toString());
+      else window.history.replaceState({}, "", newUrl.toString());
+      window.scrollTo({ top: 0 });
     } catch (err: any) {
+      if (id !== requestId.current) return;
       console.error("Attendee fetch error:", err);
       setError(err.message || "Unable to retrieve session. Please check the code.");
       setSession(null);
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
   };
 
@@ -78,9 +89,31 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
     }
   }, [initialCode]);
 
+  const resetSession = () => {
+    requestId.current++;
+    setSession(null); setInputCode(""); setError(null); setLoading(false);
+  };
+
+  useEffect(() => {
+    const onBack = () => {
+      if (!new URLSearchParams(window.location.search).get("code") && !window.location.hash.toLowerCase().startsWith("#rp-")) resetSession();
+    };
+    window.addEventListener("popstate", onBack);
+    window.addEventListener("hashchange", onBack);
+    return () => { requestId.current++; window.removeEventListener("popstate", onBack); window.removeEventListener("hashchange", onBack); };
+  }, []);
+
+  const backToPass = () => {
+    resetSession();
+    const url = new URL(window.location.href);
+    url.searchParams.delete("code"); url.searchParams.delete("page"); url.searchParams.delete("view"); url.hash = "attendee";
+    window.history.pushState({}, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchSession(inputCode);
+    fetchSession(inputCode, true);
   };
 
   const handleCopyFullSession = () => {
@@ -139,7 +172,7 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
   return (
     <div id="attendee-view-wrapper" className="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-8">
       {/* Code Lookup Bar */}
-      <section
+      {!session && <section
         id="code-lookup-section"
         className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 sm:p-7"
       >
@@ -210,19 +243,17 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
             </div>
           </div>
         )}
-      </section>
+      </section>}
 
       {/* Session Content or Expired Upgrade State */}
       {session && (
         <div id="session-display-area" className="space-y-6">
+          <button onClick={backToPass} className="text-sm font-semibold text-[#0F2540] hover:underline">← Enter another pass ID</button>
           {session.isExpired ? (
             /* Expired Pass: Show Upgrade to Premium instead of content */
             <PremiumExpiredCard
               session={session}
-              onResetCode={() => {
-                setSession(null);
-                setInputCode("");
-              }}
+              onResetCode={backToPass}
               onReactivateForTesting={handleToggleExpiryForTesting}
             />
           ) : (
@@ -469,6 +500,10 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
                   isEditable={false}
                 />
               )}
+              <SessionQuiz key={session.accessCode} session={session} onReviewTopic={(index) => {
+                setActiveFilter("all"); setSearchQuery("");
+                requestAnimationFrame(() => document.getElementById(`note-card-${index}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+              }} />
             </div>
           )}
         </div>

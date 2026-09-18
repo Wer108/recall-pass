@@ -54,7 +54,8 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [lastCheckpointTime, setLastCheckpointTime] = useState<number | null>(null);
   const [checkpointWordCount, setCheckpointWordCount] = useState(0);
-  const [transcriptSource, setTranscriptSource] = useState<"microphone" | "demo">("microphone");
+  const [speechLocale, setSpeechLocale] = useState("en-IN");
+  const [recognitionState, setRecognitionState] = useState<"idle" | "listening" | "unavailable" | "error">("idle");
 
   // Audio / Recorder refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -63,40 +64,17 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
   const timerRef = useRef<any>(null);
   const speechRecognitionRef = useRef<any>(null);
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
-  const simulationTimerRef = useRef<any>(null);
   const transcriptRef = useRef("");
+  const finalTranscriptRef = useRef("");
   const checkpointInProgressRef = useRef(false);
-
-  // Sample live talk script used if SpeechRecognition is not available or for instant verification
-  const LIVE_TALK_SIMULATION_CHUNKS = [
-    "Welcome everyone to this live technical session. Let us examine resilient distributed architecture under extreme concurrency.",
-    "First, we must acknowledge that network partitions and thread pool deadlocks are everyday operational realities in microservices.",
-    "To counter cascading latency, we implement circuit breakers that trip open fast whenever downstream error rates exceed 15 percent.",
-    "Bulkheading strictly partitions thread pools so that background tasks cannot starve critical authentication or payment paths.",
-    "Every state-mutating request requires an idempotency key stored in Redis with an atomic TTL to prevent duplicate execution during retries.",
-    "Audience Member (Marcus): Quick question from aisle two — how do you handle circuit breakers in live financial trading where stale data is prohibited?",
-    "Dr. Thorne: Excellent question. In strict trading paths, the circuit breaker must return an explicit business rejection error rather than stale cached data.",
-    "Audience Member (Sarah): Where do you recommend storing idempotency tokens in high-throughput clusters without creating a single point bottleneck?",
-    "Dr. Thorne: Use a multi-zone distributed key-value store with atomic SETNX operations and 24-hour expiration windows to keep memory strictly bounded."
-  ];
+  const isLiveRef = useRef(false);
+  const stoppingRecognitionRef = useRef(false);
 
   // Initialize Speech Recognition
   const updateTranscript = (transcript: string) => {
     const cleanTranscript = transcript.trim();
     transcriptRef.current = cleanTranscript;
     setLiveTranscript(cleanTranscript);
-  };
-
-  const startDemoTranscript = (intervalMs = 3500) => {
-    if (simulationTimerRef.current) return;
-    setTranscriptSource("demo");
-    let simIndex = 0;
-    simulationTimerRef.current = setInterval(() => {
-      if (simIndex < LIVE_TALK_SIMULATION_CHUNKS.length) {
-        const chunk = LIVE_TALK_SIMULATION_CHUNKS[simIndex++];
-        updateTranscript(transcriptRef.current ? `${transcriptRef.current}\n\n${chunk}` : chunk);
-      }
-    }, intervalMs);
   };
 
   const initSpeechRecognition = (): boolean => {
@@ -108,31 +86,52 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
         const recognizer = new SpeechRecognition();
         recognizer.continuous = true;
         recognizer.interimResults = true;
-        recognizer.lang = "en-US";
+        recognizer.lang = speechLocale;
+        recognizer.maxAlternatives = 1;
 
         recognizer.onresult = (event: any) => {
-          let currentTranscript = "";
-          for (let i = 0; i < event.results.length; i++) {
-            currentTranscript += event.results[i][0].transcript + " ";
+          let confirmed = finalTranscriptRef.current;
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const phrase = event.results[i][0]?.transcript?.trim();
+            if (!phrase) continue;
+            if (event.results[i].isFinal) confirmed = `${confirmed} ${phrase}`.trim();
           }
-          updateTranscript(currentTranscript);
+          finalTranscriptRef.current = confirmed;
+          // Publish confirmed recognition results only. Interim hypotheses can
+          // change after they appear and would make saved checkpoints diverge.
+          updateTranscript(confirmed);
         };
 
         recognizer.onerror = (event: any) => {
           console.warn("Speech recognition notice:", event.error);
-          if (["not-allowed", "service-not-allowed", "audio-capture", "network"].includes(event.error) && !transcriptRef.current) {
-            startDemoTranscript();
-          }
+          if (event.error === "no-speech" || event.error === "aborted") return;
+          setRecognitionState("error");
+          const messages: Record<string, string> = {
+            "not-allowed": "Microphone transcription permission was denied. Allow microphone access and restart the live session.",
+            "service-not-allowed": "Browser speech transcription is blocked. Enable speech recognition or use Chrome or Edge.",
+            "audio-capture": "The speech recognizer cannot access the microphone. Check the selected input device.",
+            network: "The browser speech service lost its connection. Recording continues, but no unrelated text will be substituted.",
+          };
+          setError(messages[event.error] || `Speech transcription stopped (${event.error}). Recording continues without generated text.`);
+        };
+
+        recognizer.onend = () => {
+          if (isLiveRef.current && !stoppingRecognitionRef.current) {
+            try { recognizer.start(); setRecognitionState("listening"); }
+            catch { setRecognitionState("error"); }
+          } else setRecognitionState("idle");
         };
 
         speechRecognitionRef.current = recognizer;
         recognizer.start();
-        setTranscriptSource("microphone");
+        setRecognitionState("listening");
         return true;
       } catch (err) {
         console.warn("Speech recognition initialization fallback:", err);
       }
     }
+    setRecognitionState("unavailable");
+    setError("Live transcription is not supported by this browser. Use the latest Chrome or Edge for an accurate microphone transcript. Recording can continue without transcription.");
     return false;
   };
 
@@ -142,6 +141,7 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
     chunksRef.current = [];
     setElapsedSeconds(0);
     updateTranscript("");
+    finalTranscriptRef.current = "";
     setLiveSections([]);
     setLiveQAList([]);
     setCheckpointWordCount(0);
@@ -172,31 +172,29 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
 
       recorder.start(1000);
       setIsLiveActive(true);
+      isLiveRef.current = true;
+      stoppingRecognitionRef.current = false;
 
       // Start timer
       timerRef.current = setInterval(() => {
         setElapsedSeconds((prev) => prev + 1);
       }, 1000);
 
-      // Start speech recognition
-      // Never mix canned demo text into a real microphone transcript.
-      if (!initSpeechRecognition()) startDemoTranscript();
+      initSpeechRecognition();
     } catch (err: any) {
       console.warn("Live device access notice:", err);
-      // Allow live session simulation even if hardware permission is unavailable
-      setIsLiveActive(true);
-      timerRef.current = setInterval(() => {
-        setElapsedSeconds((prev) => prev + 1);
-      }, 1000);
-
-      startDemoTranscript();
+      setError("Unable to access the stage microphone. Check browser permission and the selected input device, then start again.");
+      setRecognitionState("error");
+      setIsLiveActive(false);
+      isLiveRef.current = false;
     }
   };
 
   // Stop Live Session
   const stopLiveSession = () => {
+    isLiveRef.current = false;
+    stoppingRecognitionRef.current = true;
     if (timerRef.current) clearInterval(timerRef.current);
-    if (simulationTimerRef.current) clearInterval(simulationTimerRef.current);
     if (speechRecognitionRef.current) {
       try {
         speechRecognitionRef.current.stop();
@@ -224,9 +222,12 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
     const s = elapsedSeconds % 60;
     const durationStr = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 
-    const finalCheckpoint = liveSections.length > 0
-      ? { sections: liveSections, qaList: liveQAList }
-      : buildGroundedLiveCheckpoint(transcriptRef.current);
+    // Rebuild from the complete visible transcript so words spoken after the
+    // most recent timed checkpoint are included in the finished session.
+    const completedTranscript = buildGroundedLiveCheckpoint(transcriptRef.current);
+    const finalCheckpoint = completedTranscript.sections.length > 0
+      ? completedTranscript
+      : { sections: liveSections, qaList: liveQAList };
 
     onCompleteLiveSession({
       title: `Live Event: ${eventTraining.domain || "Technical Keynote"} (${new Date().toLocaleDateString()})`,
@@ -275,7 +276,8 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      if (simulationTimerRef.current) clearInterval(simulationTimerRef.current);
+      isLiveRef.current = false;
+      stoppingRecognitionRef.current = true;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
       }
@@ -435,7 +437,7 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
                 <span>Live Speech Transcript Stream</span>
               </span>
               <span className="text-[11px] font-mono text-slate-400">
-                {liveTranscript.split(" ").filter(Boolean).length} words spoken · {transcriptSource === "microphone" ? "Microphone" : "Demo transcript"}
+                {liveTranscript.split(/\s+/).filter(Boolean).length} words · {recognitionState === "listening" ? "Microphone synced" : recognitionState === "unavailable" ? "Unsupported browser" : recognitionState === "error" ? "Transcription stopped" : "Standby"}
               </span>
             </div>
 
@@ -457,7 +459,7 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
           {/* Console Action Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
             {!isLiveActive ? (
-              <button
+              <div className="flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-xs text-slate-400"><span>Speech language</span><select value={speechLocale} onChange={event => setSpeechLocale(event.target.value)} className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"><option value="en-IN">English (India)</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option></select></label><button
                 type="button"
                 id="btn-start-live-stage"
                 onClick={startLiveSession}
@@ -465,7 +467,7 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
               >
                 <Radio className="w-4 h-4" />
                 <span>Start Live Event Session</span>
-              </button>
+              </button></div>
             ) : (
               <div className="flex items-center gap-2">
                 <button

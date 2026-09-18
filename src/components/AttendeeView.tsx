@@ -17,8 +17,15 @@ import {
   Play,
   Volume2,
   Copy,
+  BookOpen,
+  Headphones,
+  GitBranch,
+  BarChart3,
 } from "lucide-react";
 import { SessionQuiz } from "./SessionQuiz";
+import { AudioRecap } from "./AudioRecap";
+import { SessionMindMap } from "./SessionMindMap";
+import { LearningAnalytics } from "./LearningAnalytics";
 import { SessionData } from "../types";
 import { NotesSection } from "./NotesSection";
 import { QASection } from "./QASection";
@@ -29,6 +36,19 @@ import { sessionStore } from "../services/sessionStore";
 interface AttendeeViewProps {
   initialCode?: string;
   onSelectAdmin?: () => void;
+}
+
+type AttendeeSpace = "notes" | "audio" | "mind-map" | "analytics";
+const attendeeSpaces: Array<{ id: AttendeeSpace; label: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
+  { id: "notes", label: "Notes & quiz", description: "Study the source", icon: BookOpen },
+  { id: "audio", label: "Audio recap", description: "Listen on the go", icon: Headphones },
+  { id: "mind-map", label: "Mind map", description: "Connect ideas", icon: GitBranch },
+  { id: "analytics", label: "My progress", description: "See learning signals", icon: BarChart3 },
+];
+function readSpace(): AttendeeSpace {
+  if (typeof window === "undefined") return "notes";
+  const value = new URLSearchParams(window.location.search).get("space");
+  return attendeeSpaces.some(space => space.id === value) ? value as AttendeeSpace : "notes";
 }
 
 export const AttendeeView: React.FC<AttendeeViewProps> = ({
@@ -44,6 +64,7 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
   const [copiedAll, setCopiedAll] = useState(false);
   const [copiedPass, setCopiedPass] = useState(false);
   const [showSourceMedia, setShowSourceMedia] = useState(false);
+  const [attendeeSpace, setAttendeeSpace] = useState<AttendeeSpace>(readSpace);
 
   const requestId = useRef(0);
 
@@ -71,8 +92,12 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
       const newUrl = new URL(window.location.href);
       newUrl.searchParams.set("code", data.accessCode);
       newUrl.searchParams.set("page", "session");
+      if (navigate) newUrl.searchParams.delete("space");
       newUrl.hash = "";
-      if (navigate) window.history.pushState({}, "", newUrl.toString());
+      if (navigate) {
+        setAttendeeSpace("notes");
+        window.history.pushState({}, "", newUrl.toString());
+      }
       else window.history.replaceState({}, "", newUrl.toString());
       window.scrollTo({ top: 0 });
     } catch (err: any) {
@@ -99,6 +124,7 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
   useEffect(() => {
     const onBack = () => {
       if (!new URLSearchParams(window.location.search).get("code") && !window.location.hash.toLowerCase().startsWith("#rp-")) resetSession();
+      else setAttendeeSpace(readSpace());
     };
     window.addEventListener("popstate", onBack);
     window.addEventListener("hashchange", onBack);
@@ -108,7 +134,7 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
   const backToPass = () => {
     resetSession();
     const url = new URL(window.location.href);
-    url.searchParams.delete("code"); url.searchParams.delete("page"); url.searchParams.delete("view"); url.hash = "attendee";
+    url.searchParams.delete("code"); url.searchParams.delete("page"); url.searchParams.delete("view"); url.searchParams.delete("space"); url.hash = "attendee";
     window.history.pushState({}, "", url);
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
@@ -153,6 +179,16 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
     await navigator.clipboard.writeText(session.accessCode);
     setCopiedPass(true);
     window.setTimeout(() => setCopiedPass(false), 2000);
+  };
+
+  const openSpace = (space: AttendeeSpace, targetId?: string) => {
+    setAttendeeSpace(space);
+    const url = new URL(window.location.href);
+    if (space === "notes") url.searchParams.delete("space");
+    else url.searchParams.set("space", space);
+    window.history.pushState({}, "", url);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    if (targetId) window.setTimeout(() => document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
   };
 
   const handleToggleExpiryForTesting = async () => {
@@ -268,6 +304,16 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
           ) : (
             /* Active Pass: Show Full Recall Notes & Q&A */
             <div className="space-y-6">
+              <nav aria-label="Attendee learning spaces" className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-xs lg:grid-cols-4">
+                {attendeeSpaces.map(space => {
+                  const Icon = space.icon;
+                  const active = attendeeSpace === space.id;
+                  return <button key={space.id} type="button" onClick={() => openSpace(space.id)} aria-current={active ? "page" : undefined} className={`rounded-xl px-3 py-3 text-left transition-colors ${active ? "bg-[#0F2540] text-white shadow-sm" : "text-slate-600 hover:bg-slate-50 hover:text-[#0F2540]"}`}>
+                    <span className="flex items-center gap-2 text-sm font-bold"><Icon className={`h-4 w-4 ${active ? "text-[#E8BF78]" : "text-[#0F6E56]"}`} />{space.label}</span>
+                    <span className={`mt-1 block pl-6 text-[11px] ${active ? "text-slate-300" : "text-slate-400"}`}>{space.description}</span>
+                  </button>;
+                })}
+              </nav>
               {/* Session Meta Header Card */}
               <div
                 id="session-meta-card"
@@ -449,7 +495,7 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
                 )}
 
                 {/* Filter and In-Session Search Controls */}
-                <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+                {attendeeSpace === "notes" && <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
                   {/* Segmented Filter */}
                   <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg w-full sm:w-auto">
                     <button
@@ -499,11 +545,11 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
                       className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-hidden focus:ring-1 focus:ring-[#0F2540]"
                     />
                   </div>
-                </div>
+                </div>}
               </div>
 
               {/* Render Topic Notes */}
-              {(activeFilter === "all" || activeFilter === "notes") && (
+              {attendeeSpace === "notes" && (activeFilter === "all" || activeFilter === "notes") && (
                 <NotesSection
                   sections={session.sections}
                   searchQuery={searchQuery}
@@ -512,17 +558,20 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
               )}
 
               {/* Render Real Audience Q&A */}
-              {(activeFilter === "all" || activeFilter === "qa") && (
+              {attendeeSpace === "notes" && (activeFilter === "all" || activeFilter === "qa") && (
                 <QASection
                   qaList={session.qaList}
                   searchQuery={searchQuery}
                   isEditable={false}
                 />
               )}
-              <SessionQuiz key={session.accessCode} session={session} onReviewTopic={(index) => {
+              {attendeeSpace === "notes" && <SessionQuiz key={session.accessCode} session={session} onReviewTopic={(index) => {
                 setActiveFilter("all"); setSearchQuery("");
                 requestAnimationFrame(() => document.getElementById(`note-card-${index}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
-              }} />
+              }} />}
+              {attendeeSpace === "audio" && <AudioRecap session={session} />}
+              {attendeeSpace === "mind-map" && <SessionMindMap session={session} />}
+              {attendeeSpace === "analytics" && <LearningAnalytics session={session} onStartPractice={() => openSpace("notes", "session-quiz")} />}
             </div>
           )}
         </div>

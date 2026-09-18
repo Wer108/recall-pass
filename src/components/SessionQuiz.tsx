@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Brain, ArrowRight, Check, RotateCcw, Download, BookOpen } from "lucide-react";
 import { SessionData } from "../types";
 import { buildSessionQuiz, isRecallAnswerCorrect, RecallQuestion } from "../utils/sessionQuiz";
+import { loadQuizProgress, recordQuizRun } from "../utils/learningProgress";
 
 type Attempt = { question: RecallQuestion; answer: string; correct: boolean; confident: boolean; hinted: boolean };
 const button = "rounded-lg px-4 py-2.5 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C98A2C] disabled:opacity-40";
@@ -16,10 +17,7 @@ export const SessionQuiz: React.FC<{ session: SessionData; onReviewTopic: (index
   const [started, setStarted] = useState(false);
   const [finished, setFinished] = useState(false);
   const [previous, setPrevious] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(`recallpass_quiz_v1_${session.accessCode}`) || "null");
-      return saved && Number.isInteger(saved.correct) && Number.isInteger(saved.total) && saved.total > 0 && saved.correct >= 0 && saved.correct <= saved.total ? saved : null;
-    } catch { return null; }
+    return loadQuizProgress(session.accessCode).runs.at(-1) || null;
   });
   const current = round[attempts.length - (revealed ? 1 : 0)];
   const latest = attempts.at(-1);
@@ -39,9 +37,9 @@ export const SessionQuiz: React.FC<{ session: SessionData; onReviewTopic: (index
   function next() {
     if (attempts.length === round.length) {
       setFinished(true);
-      const result = { correct, total: round.length, date: new Date().toISOString() };
+      const result = { correct, total: round.length, date: new Date().toISOString(), attempts: attempts.map(item => ({ topic: item.question.topic, correct: item.correct, confident: item.confident, hinted: item.hinted })) };
       setPrevious(result);
-      try { localStorage.setItem(`recallpass_quiz_v1_${session.accessCode}`, JSON.stringify(result)); } catch { /* Practice works without storage. */ }
+      recordQuizRun(session.accessCode, result);
     } else {
       setAnswer(""); setConfidence(""); setHinted(false); setRevealed(false);
     }

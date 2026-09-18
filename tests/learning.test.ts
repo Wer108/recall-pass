@@ -8,9 +8,10 @@ test("new pass IDs contain both letters and digits and are unique", () => {
   const codes = new Set<string>();
   for (let i = 0; i < 10000; i++) {
     const code = generateAccessCode(codes);
-    assert.match(code, /^RP-[A-Z2-9]{10}$/);
+    assert.match(code, /^RP-[A-Z2-9]{6}$/);
     assert.match(code.slice(3), /[A-Z]/);
     assert.match(code.slice(3), /[2-9]/);
+    assert.equal(code.slice(3).replace(/[A-Z]/g, "").length, 1);
     assert.equal(codes.has(code), false);
     codes.add(code);
   }

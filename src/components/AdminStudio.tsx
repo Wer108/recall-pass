@@ -29,6 +29,8 @@ import {
   Layers,
   Youtube,
   BookOpen,
+  Copy,
+  Check,
 } from "lucide-react";
 import { SessionData, TopicSection, QAPair, EventTrainingProfile } from "../types";
 import { SAMPLE_MEDIA_TRACKS, MediaTrackInfo } from "../data/sampleMediaTracks";
@@ -59,6 +61,13 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
 }) => {
   // Navigation inside Admin: 'create' | 'review' | 'manage'
   const [activeAdminTab, setActiveAdminTab] = useState<"create" | "review" | "manage">("create");
+  const [copiedPassId, setCopiedPassId] = useState<string | null>(null);
+
+  const copyPassId = async (passId: string) => {
+    await navigator.clipboard.writeText(passId);
+    setCopiedPassId(passId);
+    window.setTimeout(() => setCopiedPassId(current => current === passId ? null : current), 2000);
+  };
 
   // Track Ingestion Mode: "audio" | "video" | "youtube"
   const [mediaType, setMediaType] = useState<"audio" | "video" | "youtube">("audio");
@@ -1267,6 +1276,16 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                         <span className="font-mono text-sm font-bold px-2.5 py-0.5 rounded bg-[#0F2540] text-white">
                           {s.accessCode}
                         </span>
+                        <button
+                          type="button"
+                          id={`btn-copy-pass-${s.accessCode}`}
+                          onClick={() => void copyPassId(s.accessCode)}
+                          className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-600 hover:border-[#0F2540] hover:text-[#0F2540]"
+                          aria-label={`Copy pass ID ${s.accessCode}`}
+                        >
+                          {copiedPassId === s.accessCode ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+                          <span>{copiedPassId === s.accessCode ? "Copied" : "Copy"}</span>
+                        </button>
 
                         {/* Audio / Video Track Tag */}
                         <span

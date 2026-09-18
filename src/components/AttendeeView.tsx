@@ -16,6 +16,7 @@ import {
   Youtube,
   Play,
   Volume2,
+  Copy,
 } from "lucide-react";
 import { SessionQuiz } from "./SessionQuiz";
 import { SessionData } from "../types";
@@ -41,6 +42,7 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<"all" | "notes" | "qa">("all");
   const [copiedAll, setCopiedAll] = useState(false);
+  const [copiedPass, setCopiedPass] = useState(false);
   const [showSourceMedia, setShowSourceMedia] = useState(false);
 
   const requestId = useRef(0);
@@ -144,6 +146,13 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
     navigator.clipboard.writeText(fullText);
     setCopiedAll(true);
     setTimeout(() => setCopiedAll(false), 2000);
+  };
+
+  const handleCopyPass = async () => {
+    if (!session) return;
+    await navigator.clipboard.writeText(session.accessCode);
+    setCopiedPass(true);
+    window.setTimeout(() => setCopiedPass(false), 2000);
   };
 
   const handleToggleExpiryForTesting = async () => {
@@ -270,6 +279,16 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
                       <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-[#0F2540] text-white">
                         {session.accessCode}
                       </span>
+                      <button
+                        id="btn-copy-attendee-pass"
+                        type="button"
+                        onClick={handleCopyPass}
+                        className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-600 hover:border-[#0F2540] hover:text-[#0F2540]"
+                        aria-label={`Copy pass ID ${session.accessCode}`}
+                      >
+                        {copiedPass ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+                        <span>{copiedPass ? "Copied" : "Copy"}</span>
+                      </button>
                       {session.mediaType && (
                         <span
                           className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${

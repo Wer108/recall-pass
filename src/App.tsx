@@ -61,7 +61,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchSessions();
     syncViewFromLocation();
 
     window.addEventListener("hashchange", syncViewFromLocation);
@@ -72,6 +71,10 @@ export default function App() {
       window.removeEventListener("popstate", syncViewFromLocation);
     };
   }, []);
+
+  useEffect(() => {
+    if (currentView === "admin-studio" && adminSession) fetchSessions();
+  }, [currentView, adminSession]);
 
   // Handler: Navigate to Admin
   const handleNavigateAdmin = () => {

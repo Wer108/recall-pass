@@ -21,6 +21,7 @@ import { SessionData } from "../types";
 import { NotesSection } from "./NotesSection";
 import { QASection } from "./QASection";
 import { PremiumExpiredCard } from "./PremiumExpiredCard";
+import { validateAttendeeSession } from "../utils/validateAttendeeSession";
 import { sessionStore } from "../services/sessionStore";
 
 interface AttendeeViewProps {
@@ -44,7 +45,7 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
   const fetchSession = async (codeToFetch: string) => {
     const cleanCode = codeToFetch.trim().toUpperCase();
     if (!cleanCode) {
-      setError("Please enter a valid RecallPass access code (e.g. RP-CLOUD1).");
+      setError("Please enter the pass ID provided by your organizer.");
       return;
     }
 
@@ -53,12 +54,14 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
 
     try {
       const data = await sessionStore.getSessionByCode(cleanCode);
-      setSession(data);
-      setInputCode(cleanCode);
+      setSession(validateAttendeeSession(data));
+      setInputCode(data.accessCode);
+      setSearchQuery("");
+      setActiveFilter("all");
 
       // Sync URL hash or query without full reload
       const newUrl = new URL(window.location.href);
-      newUrl.searchParams.set("code", cleanCode);
+      newUrl.searchParams.set("code", data.accessCode);
       window.history.replaceState({}, "", newUrl.toString());
     } catch (err: any) {
       console.error("Attendee fetch error:", err);
@@ -115,7 +118,7 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
     try {
       setLoading(true);
       const updated = await sessionStore.toggleExpired(session.accessCode);
-      setSession(updated);
+      setSession(validateAttendeeSession(updated));
     } catch (err) {
       console.error("Failed to toggle expiry:", err);
     } finally {
@@ -150,7 +153,7 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
             Retrieve Live Session Notes
           </h1>
           <p className="text-slate-600 text-sm">
-            Enter the 6-character RecallPass provided by your session speaker or event organizer. No account required.
+            Enter the pass ID provided by your session speaker or event organizer. No account required.
           </p>
         </div>
 
@@ -167,7 +170,9 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
                   setInputCode(e.target.value.toUpperCase());
                   setError(null);
                 }}
-                placeholder="e.g. RP-CLOUD1"
+                placeholder="Enter your pass ID"
+                aria-label="Pass ID"
+                autoComplete="off"
                 className="w-full pl-10 pr-4 py-3 text-base font-mono font-semibold uppercase tracking-wider text-[#0F2540] bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0F2540] focus:border-transparent transition-all"
               />
             </div>
@@ -192,32 +197,6 @@ export const AttendeeView: React.FC<AttendeeViewProps> = ({
             </button>
           </div>
 
-          {/* Quick Demo Chips */}
-          <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-500">
-            <span className="text-slate-400">Sample codes:</span>
-            <button
-              type="button"
-              id="chip-sample-active"
-              onClick={() => {
-                setInputCode("RP-CLOUD1");
-                fetchSession("RP-CLOUD1");
-              }}
-              className="px-2.5 py-1 rounded-full bg-slate-100 hover:bg-[#0F2540] hover:text-white transition-colors font-mono font-semibold text-slate-700"
-            >
-              RP-CLOUD1 (Active Keynote)
-            </button>
-            <button
-              type="button"
-              id="chip-sample-expired"
-              onClick={() => {
-                setInputCode("RP-EXPIRE");
-                fetchSession("RP-EXPIRE");
-              }}
-              className="px-2.5 py-1 rounded-full bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 transition-colors font-mono font-semibold"
-            >
-              RP-EXPIRE (Expired Demo)
-            </button>
-          </div>
         </form>
 
         {error && (

@@ -87,7 +87,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({
               </button>
             </div>
             <p className="text-[11px] text-slate-500 mt-2">
-              Attendees can enter this 6-character pass on any phone or laptop.
+              Attendees can enter this pass ID on any phone or laptop.
             </p>
           </div>
 

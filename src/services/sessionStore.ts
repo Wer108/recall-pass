@@ -1,3 +1,4 @@
+import { validateAttendeeSession } from "../utils/validateAttendeeSession";
 import { SessionData, TopicSection, QAPair, AdminAuthSession, EventTrainingProfile } from "../types";
 import { SAMPLE_MEDIA_TRACKS } from "../data/sampleMediaTracks";
 import { generateExpandedStudentNotes } from "../utils/studentNoteGenerator";
@@ -191,21 +192,6 @@ function saveLocalSessions(sessions: SessionData[]) {
   }
 }
 
-function generateCode(existingCodes: Set<string>): string {
-  const chars = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-  let code = "";
-  let attempts = 0;
-  do {
-    let suffix = "";
-    for (let i = 0; i < 6; i++) {
-      suffix += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    code = `RP-${suffix}`;
-    attempts++;
-  } while (existingCodes.has(code) && attempts < 100);
-  return code;
-}
-
 // Safely parse JSON from a response, handling non-JSON (text/plain, text/html) or empty responses gracefully
 async function tryParseJson(res: Response): Promise<any> {
   let rawText = "";
@@ -281,26 +267,32 @@ export const sessionStore = {
 
   // Fetch a single session by code
   async getSessionByCode(code: string): Promise<SessionData> {
-    const cleanCode = code.trim().toUpperCase();
+    const enteredCode = code.trim().toUpperCase();
+    if (!enteredCode) throw new Error("Please enter your pass ID.");
+    const cleanCode = /^[A-Z0-9]{6}$/.test(enteredCode) ? `RP-${enteredCode}` : enteredCode;
+    let res: Response | undefined;
+    let data: any;
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(cleanCode)}`);
-      if (res.ok) {
-        const data = await tryParseJson(res);
-        return data;
-      }
+      res = await fetch(`/api/sessions/${encodeURIComponent(cleanCode)}`);
+      data = await res.json();
     } catch {
-      // Fallback
+      // Static hosts may return the app HTML instead of a session API.
     }
 
-    const localList = getLocalSessions();
-    const found = localList.find((s) => s.accessCode === cleanCode);
-    if (found) {
-      return {
-        ...found,
-        isExpired: new Date(found.expiresAt) <= new Date(),
-      };
+    if (res?.ok && data?.accessCode === cleanCode) {
+      return validateAttendeeSession(data);
     }
-    throw new Error(`Session with pass code "${cleanCode}" not found.`);
+    if (res && !res.ok && data?.error) {
+      throw new Error(data.error);
+    }
+
+    const found = getLocalSessions().find(
+      (s) => typeof s?.accessCode === "string" && s.accessCode.toUpperCase() === cleanCode && s.published
+    );
+    if (found) {
+      return validateAttendeeSession(found);
+    }
+    throw new Error("Unable to verify this pass ID. The session service is unavailable; please try again or contact your organizer.");
   },
 
   // Create & publish session
@@ -319,60 +311,25 @@ export const sessionStore = {
     sections: TopicSection[];
     qaList: QAPair[];
   }): Promise<SessionData> {
+    let res: Response;
+    let data: any;
     try {
-      const res = await fetch("/api/sessions", {
+      res = await fetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (res.ok) {
-        const data = await tryParseJson(res);
-        // Also save locally
-        const local = getLocalSessions();
-        saveLocalSessions([data, ...local.filter((s) => s.accessCode !== data.accessCode)]);
-        return data;
-      }
+      data = await res.json();
     } catch {
-      // Fallback
+      throw new Error("Unable to publish: the session service is unavailable. Please try again when the server is connected.");
     }
-
-    // Client-side session creation
+    if (!res.ok) throw new Error(data?.error || "Failed to publish session.");
+    if (!data?.accessCode || !Array.isArray(data.sections) || !Array.isArray(data.qaList)) {
+      throw new Error("Unable to publish: the server did not return a valid pass ID.");
+    }
     const local = getLocalSessions();
-    const existingCodes = new Set(local.map((s) => s.accessCode));
-    const accessCode = generateCode(existingCodes);
-
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000).toISOString();
-
-    const newSession: SessionData = {
-      id: `session-${Date.now()}`,
-      accessCode,
-      title: payload.title,
-      speaker: payload.speaker || "Featured Speaker",
-      eventContext: payload.eventContext,
-      mediaType: payload.mediaType || "audio",
-      trackName: payload.trackName,
-      trackDuration: payload.trackDuration,
-      trackSize: payload.trackSize,
-      mediaPreviewUrl: payload.mediaPreviewUrl || payload.mediaUrl,
-      mediaUrl: payload.mediaUrl || payload.mediaPreviewUrl,
-      youtubeId: payload.youtubeId,
-      isLiveEventSession: payload.isLiveEventSession,
-      createdAt: now.toISOString(),
-      expiresAt,
-      wordCount: payload.sections.reduce(
-        (acc, sec) => acc + sec.bullets.reduce((bAcc, b) => bAcc + b.split(" ").length, 0),
-        0
-      ),
-      rawTranscriptSnippet: `${payload.mediaType?.toUpperCase() || "MEDIA"} track: ${payload.trackName || "session_track"} (${payload.trackDuration || "Duration logged"})`,
-      published: true,
-      sections: payload.sections,
-      qaList: payload.qaList,
-      isExpired: false,
-    };
-
-    saveLocalSessions([newSession, ...local]);
-    return newSession;
+    saveLocalSessions([data, ...local.filter((s) => s.accessCode !== data.accessCode)]);
+    return data;
   },
 
   // Toggle expired state

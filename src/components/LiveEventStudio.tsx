@@ -20,7 +20,7 @@ import {
   Volume2,
 } from "lucide-react";
 import { EventTrainingProfile, TopicSection, QAPair } from "../types";
-import { sessionStore } from "../services/sessionStore";
+import { buildGroundedLiveCheckpoint } from "../utils/liveCheckpoint";
 
 interface LiveEventStudioProps {
   mode: "audio" | "video";
@@ -53,6 +53,8 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
   const [autoCadence, setAutoCadence] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [lastCheckpointTime, setLastCheckpointTime] = useState<number | null>(null);
+  const [checkpointWordCount, setCheckpointWordCount] = useState(0);
+  const [transcriptSource, setTranscriptSource] = useState<"microphone" | "demo">("microphone");
 
   // Audio / Recorder refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -62,6 +64,8 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
   const speechRecognitionRef = useRef<any>(null);
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
   const simulationTimerRef = useRef<any>(null);
+  const transcriptRef = useRef("");
+  const checkpointInProgressRef = useRef(false);
 
   // Sample live talk script used if SpeechRecognition is not available or for instant verification
   const LIVE_TALK_SIMULATION_CHUNKS = [
@@ -77,7 +81,25 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
   ];
 
   // Initialize Speech Recognition
-  const initSpeechRecognition = () => {
+  const updateTranscript = (transcript: string) => {
+    const cleanTranscript = transcript.trim();
+    transcriptRef.current = cleanTranscript;
+    setLiveTranscript(cleanTranscript);
+  };
+
+  const startDemoTranscript = (intervalMs = 3500) => {
+    if (simulationTimerRef.current) return;
+    setTranscriptSource("demo");
+    let simIndex = 0;
+    simulationTimerRef.current = setInterval(() => {
+      if (simIndex < LIVE_TALK_SIMULATION_CHUNKS.length) {
+        const chunk = LIVE_TALK_SIMULATION_CHUNKS[simIndex++];
+        updateTranscript(transcriptRef.current ? `${transcriptRef.current}\n\n${chunk}` : chunk);
+      }
+    }, intervalMs);
+  };
+
+  const initSpeechRecognition = (): boolean => {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
@@ -93,19 +115,25 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
           for (let i = 0; i < event.results.length; i++) {
             currentTranscript += event.results[i][0].transcript + " ";
           }
-          setLiveTranscript(currentTranscript.trim());
+          updateTranscript(currentTranscript);
         };
 
         recognizer.onerror = (event: any) => {
           console.warn("Speech recognition notice:", event.error);
+          if (["not-allowed", "service-not-allowed", "audio-capture", "network"].includes(event.error) && !transcriptRef.current) {
+            startDemoTranscript();
+          }
         };
 
         speechRecognitionRef.current = recognizer;
         recognizer.start();
+        setTranscriptSource("microphone");
+        return true;
       } catch (err) {
         console.warn("Speech recognition initialization fallback:", err);
       }
     }
+    return false;
   };
 
   // Start Live Session
@@ -113,8 +141,10 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
     setError(null);
     chunksRef.current = [];
     setElapsedSeconds(0);
+    updateTranscript("");
     setLiveSections([]);
     setLiveQAList([]);
+    setCheckpointWordCount(0);
 
     try {
       const constraints: MediaStreamConstraints =
@@ -149,17 +179,8 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
       }, 1000);
 
       // Start speech recognition
-      initSpeechRecognition();
-
-      // If speech recognition is not native or environment has no mic speech, also feed live simulation stream
-      let simIndex = 0;
-      simulationTimerRef.current = setInterval(() => {
-        if (simIndex < LIVE_TALK_SIMULATION_CHUNKS.length) {
-          const chunk = LIVE_TALK_SIMULATION_CHUNKS[simIndex];
-          setLiveTranscript((prev) => (prev ? `${prev}\n\n${chunk}` : chunk));
-          simIndex++;
-        }
-      }, 7000);
+      // Never mix canned demo text into a real microphone transcript.
+      if (!initSpeechRecognition()) startDemoTranscript();
     } catch (err: any) {
       console.warn("Live device access notice:", err);
       // Allow live session simulation even if hardware permission is unavailable
@@ -168,14 +189,7 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
         setElapsedSeconds((prev) => prev + 1);
       }, 1000);
 
-      let simIndex = 0;
-      simulationTimerRef.current = setInterval(() => {
-        if (simIndex < LIVE_TALK_SIMULATION_CHUNKS.length) {
-          const chunk = LIVE_TALK_SIMULATION_CHUNKS[simIndex];
-          setLiveTranscript((prev) => (prev ? `${prev}\n\n${chunk}` : chunk));
-          simIndex++;
-        }
-      }, 6000);
+      startDemoTranscript();
     }
   };
 
@@ -210,20 +224,14 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
     const s = elapsedSeconds % 60;
     const durationStr = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 
+    const finalCheckpoint = liveSections.length > 0
+      ? { sections: liveSections, qaList: liveQAList }
+      : buildGroundedLiveCheckpoint(transcriptRef.current);
+
     onCompleteLiveSession({
       title: `Live Event: ${eventTraining.domain || "Technical Keynote"} (${new Date().toLocaleDateString()})`,
-      sections: liveSections.length > 0 ? liveSections : [
-        {
-          id: `sec-live-${Date.now()}-1`,
-          title: "Live Event Highlights & Architecture",
-          bullets: [
-            "Processed directly from live stage audio and speech capture.",
-            "Calibrated using custom event glossary and technical terminology.",
-            "Verified points captured during the active live event stream.",
-          ]
-        }
-      ],
-      qaList: liveQAList,
+      sections: finalCheckpoint.sections,
+      qaList: finalCheckpoint.qaList,
       recordedFile,
       mediaUrl: previewUrl,
       duration: durationStr || "Live Stream",
@@ -232,35 +240,27 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
 
   // Trigger Live AI Checkpoint
   const handleTriggerCheckpoint = async () => {
-    if (!liveTranscript.trim() && elapsedSeconds < 3) return;
+    const transcriptSnapshot = transcriptRef.current.trim();
+    if (!transcriptSnapshot || checkpointInProgressRef.current) {
+      if (!transcriptSnapshot) setError("Speak a few words before extracting a checkpoint.");
+      return;
+    }
 
+    checkpointInProgressRef.current = true;
     setIsCheckpointing(true);
     setLastCheckpointTime(elapsedSeconds);
+    setError(null);
 
     try {
-      const payload: any = {
-        title: `Live Event: ${eventTraining.domain}`,
-        speaker: eventTraining.speakerContext || "Live Keynote Speaker",
-        eventContext: "Real-Time Live Event Processing Session",
-        mediaType: mode,
-        trackName: `live_stream_${mode}`,
-        trackDuration: formatTimer(elapsedSeconds),
-        transcriptFallback: liveTranscript,
-        liveTranscript,
-        trainingProfile: eventTraining,
-      };
-
-      const result = await sessionStore.processMedia(payload);
-
-      if (result && result.sections && result.sections.length > 0) {
-        setLiveSections(result.sections);
-      }
-      if (result && result.qaList && result.qaList.length > 0) {
-        setLiveQAList(result.qaList);
-      }
+      const result = buildGroundedLiveCheckpoint(transcriptSnapshot);
+      setLiveSections(result.sections);
+      setLiveQAList(result.qaList);
+      setCheckpointWordCount(result.sourceWordCount);
     } catch (err) {
       console.warn("Checkpoint processing error:", err);
+      setError("Unable to extract this checkpoint. The transcript remains available; please try again.");
     } finally {
+      checkpointInProgressRef.current = false;
       setIsCheckpointing(false);
     }
   };
@@ -268,7 +268,7 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
   // Auto-cadence effect: every 40s during live session, trigger checkpoint if new transcript available
   useEffect(() => {
     if (isLiveActive && autoCadence && elapsedSeconds > 10 && elapsedSeconds % 35 === 0) {
-      handleTriggerCheckpoint();
+      void handleTriggerCheckpoint();
     }
   }, [isLiveActive, autoCadence, elapsedSeconds]);
 
@@ -435,7 +435,7 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
                 <span>Live Speech Transcript Stream</span>
               </span>
               <span className="text-[11px] font-mono text-slate-400">
-                {liveTranscript.split(" ").filter(Boolean).length} words spoken
+                {liveTranscript.split(" ").filter(Boolean).length} words spoken · {transcriptSource === "microphone" ? "Microphone" : "Demo transcript"}
               </span>
             </div>
 
@@ -502,6 +502,11 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
               <span>Auto-extract every 35s</span>
             </label>
           </div>
+          {error && (
+            <div role="alert" className="rounded-lg border border-amber-700/50 bg-amber-950/40 px-3 py-2 text-xs text-amber-200">
+              {error}
+            </div>
+          )}
         </div>
 
         {/* Right Column: Live Generated Notes & Real Q&A Feed (5 cols) */}
@@ -581,8 +586,8 @@ export const LiveEventStudio: React.FC<LiveEventStudioProps> = ({
 
           {/* Quick Info bar */}
           <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500">
-            <span>Real-time speech segmentation active</span>
-            <span>Gemini AI Engine Ready</span>
+            <span>{checkpointWordCount > 0 ? `Grounded in ${checkpointWordCount} visible transcript words` : "Waiting for transcript checkpoint"}</span>
+            <span>{lastCheckpointTime === null ? "No checkpoint yet" : `Synced at ${formatTimer(lastCheckpointTime)}`}</span>
           </div>
         </div>
       </div>
